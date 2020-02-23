@@ -4,6 +4,8 @@ import "fmt"
 import "reflect"
 import "time"
 import "io"
+import "strings"
+import "strconv"
 
 type MysqlStream struct{
 	Stream
@@ -87,6 +89,7 @@ type ColumnTypes            []string
 type TableColumnTypes       map[string] ColumnTypes
 type SchemaTableColumnTypes map[string] TableColumnTypes
 type ServerConfigType struct{
+	Version               string
 	CapabilityFlags       Uint4  // 服务器的特征标志位。一般是服务器决定的(32位)
 	StatusFlags           Uint2  // 服务器传来的状态
 	BinlogVersion         int
@@ -96,6 +99,8 @@ type ServerConfigType struct{
 	ColumnSetTypeValues   SchemaTableColumnSetTypeValuesType // 如果某列的类型是SET，后面是值的列表，Schema => TableIcd => Column => []string
 	ColumnNames           SchemaTableColumnName  // 库=>表=>列名列表
 	ColumnTypes           SchemaTableColumnTypes // 库=>表=>列名
+	ServerCrc32CheckFlag  bool
+	CrcSize               int // CRC用到的长度
 }
 func NewServerConfig() *ServerConfigType{
 	ret := &ServerConfigType{}
@@ -104,7 +109,45 @@ func NewServerConfig() *ServerConfigType{
 	ret.ColumnSetTypeValues = make(SchemaTableColumnSetTypeValuesType)
 	ret.ColumnNames         = make(SchemaTableColumnName)
 	ret.ColumnTypes         = make(SchemaTableColumnTypes)
+	ret.CrcSize             = 0
 	return ret
+}
+func (this *ServerConfigType)compareVersion(ver string) int{
+	serverVerionSubstrings := strings.Split(this.Version, ".")
+	ver2Substrings := strings.Split(ver, ".")
+	
+	serverVerionInts := make([]int64, 0)
+	ver2Ints := make([]int64, 0)
+	for _, b := range serverVerionSubstrings {
+		b = strings.TrimFunc(b, reserveNumFunc)
+		fmt.Println("server Ver:~~~~", b)
+		i, _ := strconv.ParseInt(b, 0, 64)
+		serverVerionInts = append(serverVerionInts, i)
+	}
+	for _, b := range ver2Substrings {
+		b = strings.TrimFunc(b, reserveNumFunc)
+		fmt.Println("compare Ver:~~~~", b)
+		i, _ := strconv.ParseInt(b, 0, 64)
+		ver2Ints = append(ver2Ints, i)
+	}
+	fmt.Println("serverVerionInts=", serverVerionInts)
+	fmt.Println("ver2Ints=", ver2Ints)
+
+	var minLen int
+	if len(serverVerionSubstrings) < len(ver2Substrings){
+		minLen = len(serverVerionSubstrings)
+	}else{
+		minLen = len(ver2Substrings)
+	}
+	for i := 0; i < minLen; i++{
+		if serverVerionInts[i] < ver2Ints[i] {
+			return -1
+		}else if serverVerionInts[i] > ver2Ints[i] {
+			return +1
+		}
+	}
+	return 0
+	
 }
 
 // MySql命令状态机：
@@ -221,6 +264,25 @@ func (this *MysqlServer)Run() error{
 	return nil*/
 }
 func (this *MysqlServer)replicate() error{
+	if this.serverConfig.compareVersion("5.6.2") >= 0{
+		// 要导出binlog，需要先关闭binlog checksum
+		com := NewComQuery("SET @master_binlog_checksum='NONE'")
+		writeResultRet := this.stream.WriteCom(com)
+		if writeResultRet.err != nil{
+			return writeResultRet.err
+		}
+		comResponse, err := this.stream.Read()
+		if err != nil{
+			return err
+		}
+		if _, ok := comResponse.(OKPacket); ok{
+		}else if errPacket, ok := comResponse.(ErrPacket); ok{
+			return this.errorByErrPacket(errPacket)
+		}else {
+			return this.errorNotExpectedPacket(comResponse)
+		}
+	}
+	
 	// 把自己注册成一个Slave
 	registerCom := NewComRegisterSlave()
 	writeResultRet := this.stream.WriteCom(registerCom)
@@ -389,6 +451,16 @@ func (this *MysqlServer)errorUnknownAuthenticationMethod(handshakePacket Handsha
 	err := Error{fmt.Sprintf("Unknown AuthenticationMethod, CLIENT_PROTOCOL_41=%v, CLIENT_SECURE_CONNECTION=%v, CLIENT_PLUGIN_AUTH=%v", CapabilityFlag_CLIENT_PROTOCOL_41.isSet(handshakePacket.CapabilityFlags), CapabilityFlag_CLIENT_SECURE_CONNECTION.isSet(handshakePacket.CapabilityFlags), CapabilityFlag_CLIENT_PLUGIN_AUTH.isSet(handshakePacket.CapabilityFlags)), 0}
 	return MysqlError{NOT_EXPECTED_PACKET, this, err}
 }
+func reserveNumFunc(c rune) bool{
+	var ret bool
+	switch(c){
+		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		ret = false
+		default:
+		ret = true
+	}
+	return ret
+}
 func (this *MysqlServer)handshake(username string, password string, database string) error{
 	// Connected -+--------> HandshakePacket -+----> SSLExchange ------> ClientResponse ------> AuthenticationMethodSwitch ------> Disconnect
 	//            |                           |                           ↑        |                     ↓
@@ -410,6 +482,12 @@ func (this *MysqlServer)handshake(username string, password string, database str
 		if Uint4(handshakePacket.CapabilityFlags) & Uint4(CapabilityFlag_CLIENT_PROTOCOL_41) == 0{
 			return this.errorMustUse41(packet)
 		}
+		this.stream.serverConfig.Version = string(handshakePacket.ServerVersion)
+		// 从5.6.0后开始支持CRC32校验
+		if this.stream.serverConfig.compareVersion("5.6.0") >= 0{
+			this.serverConfig.ServerCrc32CheckFlag = true
+			this.serverConfig.CrcSize = 4
+		}
 
 		// 判断Authentication Method
 		if !CapabilityFlag_CLIENT_PLUGIN_AUTH.isSet(handshakePacket.CapabilityFlags) {
@@ -423,7 +501,37 @@ func (this *MysqlServer)handshake(username string, password string, database str
 		}else{
 			this.authenticationMethod = AuthenticationMethodType(handshakePacket.AuthPluginName)
 		}
+
+
+		// 这里处理加密密码 TODO: 要改进
+		if f, ok := authMethod[this.authenticationMethod]; ok && f != nil{
+			//fmt.Println("pass=", this.pass, " pluginData=", pluginData)
+			pluginData := string(handshakePacket.AuthPluginDataPart1 + handshakePacket.AuthPluginDataPart2)
+			authPluginResponseStr := f(this.pass, pluginData)
+			password = string(authPluginResponseStr)
+		}else{
+			return this.errorUnknownAuthenticationMethodByAuthSwitchRequest(string(this.authenticationMethod))
+		}
 		handshakeResponse := NewHandshakeResponse41(&handshakePacket, username, password, database, this.authenticationMethod)
+
+		// 根据文档 dev.mysql.com/doc/internals/en/connection-phase-packets.html ，从5.6.6之后就可以发送变量
+		// 如果不设置这些变量，在replication时会报CRC错误
+		if this.serverConfig.compareVersion("5.6.6") >= 0 {
+			// C->S
+			// bf 00 00 01 05 a2 3e 00 00 00 00 40 08 00 00 00  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00    ......>....@.... ................ 
+			// 00 00 00 00 72 65 70 6c 5f 75 73 65 72 00 14 b3  bf 99 85 6f 97 df 88 14 29 10 91 e8 65 74 cc 25    ....repl_user... ...o....)...et.% 
+			// cb 80 8a 6d 79 73 71 6c 5f 6e 61 74 69 76 65 5f  70 61 73 73 77 6f 72 64 00 69 03 5f 6f 73 05 4c    ...mysql_native_ password.i._os.L 
+			// 69 6e 75 78 0c 5f 63 6c 69 65 6e 74 5f 6e 61 6d  65 08 6c 69 62 6d 79 73 71 6c 04 5f 70 69 64 04    inux._client_nam e.libmysql._pid. 
+			// 34 31 33 35 0f 5f 63 6c 69 65 6e 74 5f 76 65 72  73 69 6f 6e 06 35 2e 36 2e 34 36 09 5f 70 6c 61    4135._client_ver sion.5.6.46._pla 
+			// 74 66 6f 72 6d 04 69 36 38 36 0c 70 72 6f 67 72  61 6d 5f 6e 61 6d 65 0b 6d 79 73 71 6c 62 69 6e    tform.i686.progr am_name.mysqlbin 
+			// 6c 6f 67                                                                                            log                               
+			handshakeResponse.AddKeyValue("_os", "Linux")
+			handshakeResponse.AddKeyValue("_client_name", "libmysql")
+			handshakeResponse.AddKeyValue("_pid", "4135")
+			handshakeResponse.AddKeyValue("_client_version", strings.TrimFunc(this.stream.serverConfig.Version, reserveNumFunc))
+			handshakeResponse.AddKeyValue("_platform", "i686")
+			handshakeResponse.AddKeyValue("program_name", "mysqlbinlog")
+		}
 		this.printPacket(handshakeResponse)
 		writeResultRet := this.stream.Write(handshakeResponse)
 		if writeResultRet.err != nil{
@@ -434,6 +542,8 @@ func (this *MysqlServer)handshake(username string, password string, database str
 		this.printPacket(packet)
 		if errPacket, ok := packet.(ErrPacket); ok{
 			return this.errorByErrPacket(errPacket)
+		}else if _, ok := packet.(OKPacket); ok {
+			goto EXIT
 		}
 		
 		// 缺少OKPacket
@@ -480,6 +590,7 @@ func (this *MysqlServer)handshake(username string, password string, database str
 		// OK Packet
 		// 其它Packet
 	}
+	EXIT:
 	this.state = HANDSHAKED
 	return nil
 }

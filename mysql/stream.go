@@ -100,7 +100,21 @@ func (this *Stream) reset(){
 	
 }
 func (this *Stream) moreDataInPayload(length int)bool{
-	return this.byteReadCounter < int64(length)
+	crcLength := int64(0)
+	if this.crc32Checked(){
+		crcLength = 4
+	}
+	fmt.Println("moreDataInPayload, crcLength=", crcLength, " length=", length, " crcLength=", crcLength)
+	return this.byteReadCounter < (int64(length) - crcLength)
+}
+func (this *Stream) crc32Checked() bool{
+	// 从5.6版开始支持CRC、row_image只记部分等
+	// https://docs.oracle.com/cd/E17952_01/mysql-5.6-en/replication-compatibility.html
+	if this.serverConfig.compareVersion("5.6.0") >= 0{
+		return this.serverConfig.ServerCrc32CheckFlag
+	}else{
+		return false;
+	}
 }
 // 把b重新推回字节流。下一次重新读出来
 // 注意，推进去的顺序与读出来的顺序是相反的。如pushBack(10)，pushBack(20)，pushBack(30)，读出来的顺序是30、20、10
@@ -315,7 +329,7 @@ func (this *Stream) ReadStringNul() (StringNul, error){
 // 一直读到整个Packet结尾
 func (this *Stream) ReadStringEof(packetLength int) (StringEof, error){
 	fmt.Println("ReadStringEof, packetLength=", packetLength, " byteReadCounter=", this.byteReadCounter)
-	if bytes, _, err := this.readNBytes(int64(packetLength) - this.byteReadCounter); err == nil{
+	if bytes, _, err := this.readNBytes(int64(packetLength) - this.byteReadCounter - int64(this.serverConfig.CrcSize)); err == nil{
 		return StringEof(bytes), nil
 	}else{
 		return StringEof(""), err
@@ -420,24 +434,41 @@ func readColumnValueTypeInt16(schema, table, column string, metaDef []byte, stre
 	}
 	return ret, err
 }
+func unsigned(schema, table, column string, stream *Stream) bool{
+	if tableColumnSigned, ok := stream.serverConfig.Unsigned[schema]; ok{
+		if columnSigned, ok := tableColumnSigned[table]; ok{
+			if signed, ok := columnSigned[column]; ok{
+				return signed
+			}
+		}
+	}
+	return false
+}
 func readColumnValueTypeInt8(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error){
 	var err error
 	var buf []byte
 	var ret int8
-	fmt.Println("IN readColumnValueTypeInt8")
+	var uret uint8
+	fmt.Println("IN readColumnValueTypeInt8, unsigned=", unsigned(schema, table, column, stream))
 	if buf, _, err = stream.readNBytes(1); err == nil{
-		ret = int8(buf[0])
+		if unsigned(schema, table, column, stream){
+			uret = uint8(buf[0])
+			return uret, err
+		}else{
+			ret = int8(buf[0])
+			return ret, err
+		}
 	}
-	return ret, err
+	return nil, err
 }
 func readColumnValueTypeFloat64(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error){
-		var err error
-		var buf []byte
-		var ret float64
-		if buf, _, err = stream.readNBytes(8); err == nil{
-			ret = math.Float64frombits(binary.LittleEndian.Uint64(buf))
-		}
-		return ret, err
+	var err error
+	var buf []byte
+	var ret float64
+	if buf, _, err = stream.readNBytes(8); err == nil{
+		ret = math.Float64frombits(binary.LittleEndian.Uint64(buf))
+	}
+	return ret, err
 }
 func readColumnValueTypeDatetime(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error){
 	var ret ColumnValueTimeType
@@ -486,6 +517,7 @@ func init(){
 		var err error
 		var buf []byte
 		var ret float32
+		// TODO: 需要增加无符号处理
 		if buf, _, err = stream.readNBytes(4); err == nil{
 			ret = math.Float32frombits(binary.LittleEndian.Uint32(buf))
 		}
@@ -495,6 +527,7 @@ func init(){
 		var err error
 		var buf []byte
 		var ret float64
+		// TODO: 需要增加无符号处理
 		if buf, _, err = stream.readNBytes(8); err == nil{
 			ret = math.Float64frombits(binary.LittleEndian.Uint64(buf))
 		}
@@ -795,9 +828,105 @@ func init(){
 		return buf, err
 	}
 	//readColumnValueTypeBytes
-	readColumnValueFunc[ColumnTypeTimestamp2 ] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) { return nil,nil }
-	readColumnValueFunc[ColumnTypeDatetime2  ] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) { return nil,nil }
-	readColumnValueFunc[ColumnTypeTime2      ] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) { return nil,nil }
+	readColumnValueFunc[ColumnTypeTimestamp2 ] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+		// 在5.6.46中确认使用，4个字节。但是高位在前。比如1971-01-01 00:00:00对应的是31507200（0x1E0C300），取得的数据流是1 e0 c3 0
+		var ret ColumnValueTimeType
+		var err error
+		if buf, _, err := stream.readNBytes(int64(4)); err == nil{
+			int32Val := ( Uint4(buf[0])<< 24 ) | ( Uint4(buf[1])<< 16 ) | ( Uint4(buf[2])<<8 ) | Uint4(buf[3])
+			if int32Val == 0{
+				ret = NewColumnValueTime(ZeroDateFormat, 0, 0, 0, 0, 0, 0, 0)
+			}else{
+				t := time.Unix(int64(int32Val), 0)
+				ret = NewColumnValueTime(DateTimeFormat, Uint2(t.Year()), Uint1(t.Month()), Uint1(t.Day()), Uint1(t.Hour()), Uint1(t.Minute()), Uint1(t.Second()), 0)
+			}
+		}
+		return ret, err
+		//return nil, nil
+	}
+	readColumnValueFunc[ColumnTypeDatetime2  ] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+		// 年14位；月4位；日5位；时间9位
+		// 80 0 0 0 0 = 0000-00-00 00:00:00
+		// 80 0 2 0 0 = 0000-00-01 00:00:00
+		// 80 0 4 0 0 = 0000-00-02 00:00:00
+		// 80 0 82 0 0 = 0000-02-01 00:00:00   1000 0000 0000 0000 10   00 001   0 0000 0000
+		// 80 3 c2 0 0 = 0001-02-01 00:00:00   1000 0000 0000 0011 11   00 001   0 0000 0000 + 13
+		// b9 fd fc 0 0 = 4567-12-30 00:00:00  1011 1001 1111 1101 11   11 110   0 0000 0000
+		// 80 0 0 0 0 = 0000-00-00 00:00:00
+		// 80 7 2 0 0 = 0002-02-01 00:00:00    1000 0000 0000 0111 00   00 001   0 0000 0000
+		// 80 d 82 0 0 = 0004-02-01 00:00:00   1000 0000 0000 1101 10   00 001   0 0000 0000
+		// 80 1a 82 0 0 = 0008-02-01 00:00:00  1000 0000 0001 1010 10   00 001   0 0000 0000
+		// 80 0 c2 0 0 = 0000-03-01 00:00:00   1000 0000 0000 0000 11   00 001   0 0000 0000
+		// 80 1 2 0 0 =  0000-04-01 00:00:00   1000 0000 0000 0001 00   00 001   0 0000 0000
+		// 80 2 2 0 0 =  0000-08-01 00:00:00   1000 0000 0000 0010 00   00 001   0 0000 0000
+		// 80 0 0 0 0 = 0000
+		// 80 3 2 0 0 = 0000-12-01 00:00:00    1000 0000 0000 0011 00   00 001   0 0000 0000
+		// 80 3 82 0 0 = 0001-01-01 00:00:00   1000 0000 0000 0011 10   00 001   0 0000 0000
+		// 80 0 42 0 0 = 0000-01-01 00:00:00   1000 0000 0000 0000 01   00 001   0 0000 0000
+		// 8c b3 82 0 0 = 1000-06-01 00:00:00                 10 0011 0010 1100 1110   00 001   0 0000 0000
+		// 8c b3 82 c7 ed = 1000-06-01 12:31:45       1100 0111 1110 1101
+		// 1000 0000 0000 0000 0000 0000 0000 0000 0000 0000
+		//   <- year and month -><day-><-      second     ->
+		//                             <- H-> <- M -><- S ->
+		// year / 13 = 真实的年；year%13=月（包含0）
+		var err error
+		var buf []byte
+		var ret ColumnValueTimeType
+		if buf, _, err = stream.readNBytes(int64(5)); err == nil{
+			second := buf[4] & 0x3f
+			minute := (buf[4] >> 6) | ((buf[3] & 0x0f) << 2)
+			hour := ((buf[3] & 0xf0) >> 4) | ((buf[2] & 0x01) << 4)
+			day := (buf[2] & 0x3e) >> 1
+			yearAndMonth := (int32(buf[0] & 0x3f)<<10) | (int32(buf[1])<<2) | int32((buf[2]&0xc0) >> 6)
+			year := yearAndMonth / 13
+			month := yearAndMonth % 13
+			
+			ret = NewColumnValueTime(DateTimeNanoFormat, Uint2(year), Uint1(month), Uint1(day), Uint1(hour), Uint1(minute), Uint1(second), 0)
+		}
+		return ret, err
+	}
+	readColumnValueFunc[ColumnTypeTime2      ] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+		// 80 0 0  = 00:00:00
+		// 80 0 1  = 00:00:01
+		// b4 6e fb = 838:59:59
+		// 80 0 40 = 00:01:00
+		// 80 10 0  = 01:00:00
+		// a0 0 0 = 512:00:00
+		// 4b 91 5 = -838:59:59
+		// 正数最高位1，原码表示；负数最高位是0补码表示
+		// buf[0] ~ buf[1]高4位：小时
+		// buf[1]低4位～buf[2]高2位：分
+		// buf[2]低6位：秒
+		var buf []byte
+		var ret time.Duration
+		var err error
+		if buf, _, err = stream.readNBytes(int64(3)); err == nil{
+			plus := -1
+			if buf[0] & 0x80 != 0{
+				plus = +1
+			}
+			var val int32
+			if plus == +1{
+				val = (int32(buf[0] & 0x7F)<<16) | (int32(buf[1])<<8) | int32(buf[2])
+			}else{
+				val2 := (uint32(0xFF)<<24) | (uint32(buf[0] | 0x80)<<16) | (uint32(buf[1])<<8) | uint32(buf[2])
+				val = int32(val2)
+				val = -val
+			}
+			fmt.Println("step1, val=",val)
+			hour := val >> 12
+			minute := (val & 0x00000FC0) >> 6
+			second := val & 0x0000003F
+			fmt.Println("hour=", plus * int(hour), " minute=", minute, " second=", second)
+			ret, err = time.ParseDuration(fmt.Sprintf("%vh%vm%vs", plus * int(hour), minute, second ))
+		}
+		return ret, err
+		
+	}
+	//func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	//buf, _, err := stream.readNBytes(int64(3));
+	//return buf, err
+	//}
 	readColumnValueFunc[ColumnTypeNewDecimal ] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
 		// https://www.mysqltutorial.org/mysql-decimal/
 		// 整数和小数部分分开
@@ -824,14 +953,22 @@ func init(){
 			buffer := buffers[i]
 			for j := byte(0); j < digits[i]; j++{
 				var n int
+				// 转成十进制后的位数
+				decLength := 9
 				if i == 0 && j == 0{
 					// 整数部分第一段
-					n = digitsRequireBytes[(metaDef[0] - metaDef[1]) % 9]
+					decLength = int((metaDef[0] - metaDef[1]) % 9)
+					n = digitsRequireBytes[decLength]
 				}else if i == 1 && j == dDigits - 1{
 					// 小数部分最后一段
-					n = digitsRequireBytes[metaDef[1] % 9]
+					decLength = int(metaDef[1] % 9)
+					n = digitsRequireBytes[int(decLength)]
+					//lastFraction = true
 				}else {
 					n = 4
+				}
+				if decLength == 0{
+					decLength = 9
 				}
 				if n == 0{
 					n = 4
@@ -866,8 +1003,13 @@ func init(){
 					}else{
 						dAllZero = dAllZero && (xx == int32(0))
 					}
-					fmt.Println("xx=", xx)
-					buffer.WriteString(fmt.Sprintf("%09d", xx))
+					// 小数部分最后一段不需要补0
+					format := fmt.Sprintf("%%0%dd", decLength)
+					fmt.Println("xx=", xx, " format=", format, " decLength=", decLength)
+					//if lastFraction {
+					//format = "%0d"
+					//}
+					buffer.WriteString(fmt.Sprintf(format, xx))
 				}else{
 					// 出错
 				}
@@ -883,6 +1025,7 @@ func init(){
 				ret = "0." + strings.TrimRight(dBuf.String(), "0")
 			}else {
 				ret = mBuf.String() + "." + dBuf.String()
+				fmt.Println("Before Trim 0:", ret)
 				ret = strings.Trim(ret, "0")
 			}
 			if !sign{
@@ -949,21 +1092,57 @@ func init(){
 			return ret, err
 		}else{
 			// 是个string
-			fmt.Println("String column");
-			fmt.Println("Calc length 1=", metaDef[0])
-			fmt.Println("Calc length 2=", metaDef[0] & 0x30)
-			fmt.Println("Calc length 3=", metaDef[0] & 0x30 ^ 0x30)
-			fmt.Println("Calc length 4=",  ((uint16(metaDef[0] & 0x30 ^ 0x30)) << 8))
-			fmt.Println("Calc length 5=", uint16(metaDef[1]))
-			fmt.Println("Calc length 6=", ((uint16(metaDef[0] & 0x30 ^ 0x30)) << 8) | uint16(metaDef[1]))
-
-			maxBytes := ((uint16(metaDef[0] & 0x30 ^ 0x30)) << 8) | uint16(metaDef[1])
-			fmt.Println("maxBytes =", maxBytes)
-			return readStringInMaxBytes(uint32(maxBytes), stream)
+			if stream.serverConfig.compareVersion("5.6.0") >= 0 {
+				// 5.6.46时，STRING要maxByte决定byte长度占几个字节，后面是把字节数+长度byte的方式
+				// 总长170(utf8)时，总字节数510=       01 1111 1110，meta = EE FE  1110 1110 1111 1110
+				// 总长255(utf8)时，总字节数765=       10 1111 1101，meta = DE FD  1101 1110 1111 1101
+				// 总长60(utf8_bing)时，总字节数180=   00 1011 0100，meta = FE B4  1111 1110 1011 0100
+				// 总长255(utf8mb4)时，最大字节数1020= 11 1111 1100，meta = CE FC  1100 1110 1111 1100
+				// 结论：用meta[0]的低5、6位求反+meta[1]表示最大长度
+				maxBytes := (uint16(      ^(metaDef[0])&0x30    )<<4) | uint16(metaDef[1])
+				lengthBytes := 1
+				if maxBytes > 255{
+					lengthBytes = 2
+				}
+				fmt.Println(">=5.6.0, maxBytes =", maxBytes, " lengthBytes=", lengthBytes)
+				var length int
+				var err error
+				if lengthBytes == 1{
+					var n Uint1
+					if n, err = stream.ReadUint1(); err == nil{
+						length = int(n)
+					}
+				}else if lengthBytes == 2{
+					var n Uint2
+					if n, err = stream.ReadUint2(); err == nil{
+						length = int(n)
+					}
+				}
+				if err == nil{
+					var str StringFix
+					str, err = stream.ReadStringFix(length)
+					fmt.Println("Read String From stream>=5.6.46, length=", length, " str=", str)
+					return string(str), err
+				}else{
+					return nil, err
+				}
+			}else{
+				fmt.Println("String column");
+				fmt.Println("Calc length 1=", metaDef[0])
+				fmt.Println("Calc length 2=", metaDef[0] & 0x30)
+				fmt.Println("Calc length 3=", metaDef[0] & 0x30 ^ 0x30)
+				fmt.Println("Calc length 4=",  ((uint16(metaDef[0] & 0x30 ^ 0x30)) << 8))
+				fmt.Println("Calc length 5=", uint16(metaDef[1]))
+				fmt.Println("Calc length 6=", ((uint16(metaDef[0] & 0x30 ^ 0x30)) << 8) | uint16(metaDef[1]))
+				maxBytes := ((uint16(metaDef[0] & 0x30 ^ 0x30)) << 8) | uint16(metaDef[1])
+				fmt.Println("maxBytes =", maxBytes)
+				return readStringInMaxBytes(uint32(maxBytes), stream)
+			}
 		}
 	}
 	readColumnValueFunc[ColumnTypeGeometry   ] = readColumnValueTypeBytes
 }
+
 func(this *Stream) readColumnValue(schema, table, column string, columnType ColumnType, metaDef []byte, isNul bool) (ColumnValueType, error){
 	ret := NewColumnValue(columnType, isNul)
 	var err error
@@ -996,9 +1175,9 @@ var createEventFuncs map[Uint1] createEventFuncType
 func init(){
 	createEventFuncs = make(map[Uint1] createEventFuncType, 30)
 	// 0x00 UNKNOWN_EVENT（忽略）
-	createEventFuncs[EventTypeUnknownEvent] = func(int, EventHeaderType, *Stream) (interface{}, error){ panic("UNKNOWN_EVENT"); return nil, nil }
+	createEventFuncs[EventTypeUnknownEvent] = func(int, EventHeaderType, *Stream) (interface{}, error){ panic("UNKNOWN_EVENT"); panic("UNKNOWN_EVENT"); return nil, nil }
 	// START_EVENT_V3（只适用于binlog-vertion=1~3，所以这里忽略）
-	createEventFuncs[EventTypeStartEventV3] = func(int, EventHeaderType, *Stream) (interface{}, error){ panic("START_EVENT_V3"); return nil, nil }
+	createEventFuncs[EventTypeStartEventV3] = func(int, EventHeaderType, *Stream) (interface{}, error){ panic("START_EVENT_V3"); panic("START_EVENT_V3"); return nil, nil }
 	// QUERY_EVENT
 	createEventFuncs[EventTypeQueryEvent] = func(length int, eventHeader EventHeaderType, stream *Stream) (interface{}, error){
 		ret := QueryEventType{}
@@ -1082,7 +1261,7 @@ func init(){
 											}
 
 											case Q_UPDATED_DB_NAMES:
-											panic("Q_UPDATED_DB_NAMES")
+											// 在5.6.46中CREATE TABLE IF NOT EXIS&……中调用。在初始化DB时会产生
 											if n, err = stream.ReadUint1(); err == nil{
 												statusVar.updatedDbNames = make([]StringNul, 0)
 												for i := 0; i < int(n); i++{
@@ -1094,6 +1273,7 @@ func init(){
 														statusVar.updatedDbNames = append(statusVar.updatedDbNames, updatedDbName)
 													}
 												}
+												fmt.Println("Q_UPDATED_DB_NAMES=", statusVar.updatedDbNames)
 											}
 
 											case Q_MICROSECONDS:
@@ -1458,6 +1638,7 @@ func init(){
 													}
 													if err == nil{
 														ret.NullBitmask, _, err = stream.readNBytes(int64(ret.ColumnCount + 7)/8) // 这里文档写错了。文档上写的是“+7)/8”
+														// 在5.6.46中，查看log_event.h，这里多一个字段，叫m_meta_memory，但意义不明。这里应该消耗掉
 													}
 												}
 											}
@@ -1484,6 +1665,7 @@ func init(){
 			fmt.Println("readRowColumnValues, range columnTypes=", i, columnTypes[i])
 			isNul := (nulBitMap[i/8] & (byte(0x01) << (i%8))) != 0
 			fmt.Println("isNul=", isNul)
+			fmt.Println("after read column=", column, "(", i, ") byteReadCounter=", stream.byteReadCounter)
 			if metaDefLength, ok := columnMetaDefLength[columnTypes[i]]; ok{
 				metaDef := columnMetaDef[metaDefPosition:metaDefPosition + metaDefLength]
 				if val, err = stream.readColumnValue(schema, table, column, columnTypes[i], metaDef, isNul); err == nil{
@@ -1515,9 +1697,12 @@ func init(){
 			if ret.Flags, err = stream.ReadUint2(); err == nil{
 				if rowEventVersion == Uint1(2){
 					if ret.ExtraDataLength, err = stream.ReadUint2(); err == nil{
-						ret.ExtraData, _, err = stream.readNBytes(int64(ret.ExtraDataLength))
+						if ret.ExtraDataLength - 2 > 0{
+							ret.ExtraData, _, err = stream.readNBytes(int64(ret.ExtraDataLength) - 2) // 根据文档这里要减2
+						}
 					}
 				}
+				fmt.Println("ExtraDataLength=", ret.ExtraDataLength)
 				if err == nil{
 					if ret.NumberOfColumns, err = stream.ReadUintLenenc(); err == nil{
 						ret.ColumnsPresentBitmap1, _, err = stream.readNBytes(int64((ret.NumberOfColumns) + 7 )/ 8)
@@ -1601,7 +1786,9 @@ func init(){
 							if err != nil{
 								break
 							}
-							ret.Rows = append(ret.Rows, rowsEventRow)							
+							ret.Rows = append(ret.Rows, rowsEventRow)
+							fmt.Println("---------- READ ROW END ----------, byteReadCounter=", stream.byteReadCounter, " length=", int64(payloadLength))
+							
 						}
 					}
 				}
@@ -1653,11 +1840,17 @@ func init(){
 		return ret, err
 	}
 	// WRITE_ROWS_EVENTv2
-	createEventFuncs[EventTypeWriteRowsEventv2] = func(payloadLength int, _ EventHeaderType, stream *Stream) (interface{}, error){ panic("WRITE_ROWS_EVENTv2"); return createRowEvent(EventTypeWriteRowsEventv2, 2, payloadLength, stream) }
+	createEventFuncs[EventTypeWriteRowsEventv2] = func(payloadLength int, _ EventHeaderType, stream *Stream) (interface{}, error){
+		return createRowEvent(EventTypeWriteRowsEventv2, 2, payloadLength, stream)
+	}
 	// UPDATE_ROWS_EVENTv2
-	createEventFuncs[EventTypeUpdateRowsEventv2] = func(payloadLength int, _ EventHeaderType, stream *Stream) (interface{}, error){ panic("UPDATE_ROWS_EVENTv2"); return createRowEvent(EventTypeUpdateRowsEventv2, 2, payloadLength, stream) }
+	createEventFuncs[EventTypeUpdateRowsEventv2] = func(payloadLength int, _ EventHeaderType, stream *Stream) (interface{}, error){
+		return createRowEvent(EventTypeUpdateRowsEventv2, 2, payloadLength, stream)
+	}
 	// DELETE_ROWS_EVENTv2
-	createEventFuncs[EventTypeDeleteRowsEventv2] = func(payloadLength int, _ EventHeaderType, stream *Stream) (interface{}, error){ panic("DELETE_ROWS_EVENTv2"); return createRowEvent(EventTypeDeleteRowsEventv2, 2, payloadLength, stream) }
+	createEventFuncs[EventTypeDeleteRowsEventv2] = func(payloadLength int, _ EventHeaderType, stream *Stream) (interface{}, error){
+		return createRowEvent(EventTypeDeleteRowsEventv2, 2, payloadLength, stream)
+	}
 	createEventFuncs[EventTypeGtidEvent] = func(payloadLength int, _ EventHeaderType, stream *Stream) (interface{}, error){ panic("GTID_EVENT"); return nil, nil }
 	createEventFuncs[EventTypeAnonymousGtidEvent] = func(payloadLength int, _ EventHeaderType, stream *Stream) (interface{}, error){ panic("ANONYMOUS_GTID_EVENT"); return nil, nil }
 	createEventFuncs[EventTypePreviousGtidsEvent] = func(payloadLength int, _ EventHeaderType, stream *Stream) (interface{}, error){ panic("PREVIOUS_GTIDS_EVENT"); return nil, nil }
@@ -1670,6 +1863,12 @@ func (this *Stream) readEventPacket(packetLength int)(ret interface{}, err error
 			// 根据类型生成具体的event
 			if f, ok := createEventFuncs[eventHeader.EventType]; ok{
 				ret, err = f(packetLength, eventHeader, this)
+				// packet是以5.5.62为准的，但后续版本可能会增加一些字段。这些增加的字段不影响处理binglog。所以这里都直接消耗掉
+				if this.byteReadCounter != int64(packetLength) {
+					var buf []byte
+					buf, _, err = this.readNBytes(int64(packetLength) - this.byteReadCounter)
+					fmt.Println("discard bytes=", buf)
+				}
 			}else{
 				// 未实现这个event对应的创建功能
 				err = NewUnknownEventTypeError(eventHeader.EventType)

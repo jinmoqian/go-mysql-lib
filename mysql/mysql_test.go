@@ -15,10 +15,12 @@ package mysql
 // INSERT INTO  test.tbl_mediumint VALUES(-8388608);
 // INSERT INTO  test.tbl_mediumint VALUES(NULL);
 // INSERT INTO  test.tbl_mediumint VALUES(8388607);
+
 // CREATE TABLE test.tbl_int (val int);
 // INSERT INTO  test.tbl_int VALUES(-2147483648);
 // INSERT INTO  test.tbl_int VALUES(NULL);
 // INSERT INTO  test.tbl_int VALUES(2147483647);
+
 // CREATE TABLE test.tbl_bigint (val bigint);
 // INSERT INTO  test.tbl_bigint VALUES(-9223372036854775808);
 // INSERT INTO  test.tbl_bigint VALUES( 9223372036854775807);
@@ -116,7 +118,7 @@ package mysql
 // INSERT into  test.tbl_date Values('0001-09-12');
 // INSERT into  test.tbl_date Values('0001-09-24');
 
-// CREATE TABLE test.tbl_datetime (val datetime);  // MYSQL_TYPE_DATETIME
+// CREATE TABLE test.tbl_datetime (val datetime);  // MYSQL_TYPE_DATETIME, 5.6.46用ColumnTypeDatetime2
 // INSERT into  test.tbl_datetime Values('0-0-0');
 // INSERT into  test.tbl_datetime Values('0-0-01');
 // INSERT into  test.tbl_datetime Values('0-0-02');
@@ -124,28 +126,44 @@ package mysql
 // INSERT into  test.tbl_datetime Values('0001-02-01');
 // INSERT into  test.tbl_datetime Values('4567-12-30');
 // INSERT into  test.tbl_datetime Values('9999-12-31 23:59:59.999999'); // 小数点后不支持
+// INSERT into  test.tbl_datetime Values('0002-02-01');
+// INSERT into  test.tbl_datetime Values('0004-02-01');
+// INSERT into  test.tbl_datetime Values('0008-02-01');
+// INSERT into  test.tbl_datetime Values('0000-03-01');
+// INSERT into  test.tbl_datetime Values('0000-04-01');
+// INSERT into  test.tbl_datetime Values('0000-08-01');
+// INSERT into  test.tbl_datetime Values('0000-16-01');
+// INSERT into  test.tbl_datetime Values('0000-12-01');
+// INSERT into  test.tbl_datetime Values('0001-01-01');
+// INSERT into  test.tbl_datetime Values('0000-01-01');
+// INSERT into  test.tbl_datetime Values('1000-06-01');
+// INSERT into  test.tbl_datetime Values('1000-06-01 12:31:45');
 
 // CREATE TABLE test.tbl_time (val time);      // MYSQL_TYPE_TIME
 // INSERT INTO test.tbl_time VALUES('0:0:0');
 // INSERT INTO test.tbl_time VALUES('0:0:1');
+// INSERT INTO test.tbl_time VALUES('0:1:0');
+// INSERT INTO test.tbl_time VALUES('1:0:0');
+// INSERT INTO test.tbl_time VALUES('512:0:0');
+// INSERT INTO test.tbl_time VALUES('1024:0:0'); // 实际插入838:59:59 5.6.46
 // INSERT INTO test.tbl_time VALUES('838:59:59');
-// INSERT INTO test.tbl_time VALUES('2330:10:07')
+// INSERT INTO test.tbl_time VALUES('2330:10:07') // 实际插入838:59:59 5.6.46
 // INSERT INTO test.tbl_time VALUES('-838:59:59');
 
 // CREATE TABLE test.tbl_year (val year);   // MYSQL_TYPE_YEAR
-// INSERT INTO test.tbl_year VALUES(1900);
+// INSERT INTO test.tbl_year VALUES(1900);  // 报warning，实际显示0000
 // INSERT INTO test.tbl_year VALUES(1901);
 // INSERT INTO test.tbl_year VALUES(2154);
 // INSERT INTO test.tbl_year VALUES(2155);
-// INSERT INTO test.tbl_year VALUES(2156);
+// INSERT INTO test.tbl_year VALUES(2156); // 报warning，实际显示0000
 // INSERT INTO test.tbl_year VALUES(null);
 
 // CREATE TABLE test.tbl_timestamp (val timestamp); // MYSQL_TYPE_TIMESTAMP ColumnTypeTimestamp
-// INSERT into test.tbl_timestamp values(0);
-// INSERT into test.tbl_timestamp values(1);
+// INSERT into test.tbl_timestamp values(0);  // 显示0000-00-00 00:00:00
+// INSERT into test.tbl_timestamp values(1);  // 报warning，显示0000-00-00 00:00:00
 // INSERT into test.tbl_timestamp values('1971-01-01 00:00:00');
-// INSERT into test.tbl_timestamp values('1970-01-01 00:00:01');
-// INSERT into test.tbl_timestamp values('1970-01-01 08:00:00');
+// INSERT into test.tbl_timestamp values('1970-01-01 00:00:01'); // 报warning，插入0000-00-00
+// INSERT into test.tbl_timestamp values('1970-01-01 08:00:00'); // 报warning，插入0000-00-00
 // INSERT into test.tbl_timestamp values('1970-01-01 08:00:01');
 // INSERT into test.tbl_timestamp values('2038-01-19 11:14:07');
 
@@ -168,6 +186,13 @@ package mysql
 // CREATE TABLE test.tbl_char5 (val char(255)) default charset=utf8;
 // insert into test.tbl_char5 values('一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十');
 
+// CREATE TABLE test.tbl_char5_2 (val char(170)) default charset=utf8; // 用于测试总字节数为0x01FE时情况
+// insert into test.tbl_char5_2 values('一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十');
+
+// CREATE TABLE test.tbl_char5_3 (val char(255)) default charset=utf8mb4; // 5.6后开始支持，共255*4=1020字节
+// insert into test.tbl_char5_3 values('一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十');
+
+
 // CREATE TABLE test.tbl_varchar (val varchar(10)) default charset=utf8; // MYSQL_TYPE_VARCHAR  columnType= 15  metaDef= [30 0]
 // insert into test.tbl_varchar values('你好啦');
 // insert into test.tbl_varchar values('啦啦你好啦');
@@ -176,10 +201,6 @@ package mysql
 // INSERT into test.tbl_tinyblob values('abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi !');
 // INSERT into test.tbl_tinyblob values('abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi ');
 
-
-// CREATE TABLE test.tbl_char5 (val char(255)) default charset=utf8; // ColumnDef:[254], ColumnMetaDef:[222 253] 0xDE 0FD 0xFDDE = 1111 1101 1101 1110
-// insert into test.tbl_char5 values('一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十');
-// insert into test.tbl_char5 values('一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五百千');
 
 // CREATE TABLE test.tbl_char86utf8 (val char(86)) default charset=utf8;
 // insert into test.tbl_char86utf8 values('一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五百千');
@@ -247,7 +268,7 @@ insert into test.tbl_blob values('abcdefghijabcdefghijabcdefghijabcdefghijabcdef
 
 // create table test.tbl_set3(val set("a", "x"));
 
-// CREATE TABLE `tbl_set4` ( `val` set('a','a','b') DEFAULT NULL s) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+// CREATE TABLE `tbl_set4` ( `val` set('a','a','b') DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 // insert into test.tbl_set4 values('a');
 
 // CREATE TABLE `tbl_set5` (  `val` set('1','2','3') DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
@@ -297,6 +318,13 @@ insert into test.tbl_blob values('abcdefghijabcdefghijabcdefghijabcdefghijabcdef
 // delete from tbl_2cols_autoincre where val1 = 1;
 // delete from tbl_2cols_autoincre;
 
+// create table test.tbl_update(val1 int unsigned not null auto_increment, val2 char(10), primary key(val1) );
+// insert into test.tbl_update(val2) VALUES('hello');
+// insert into test.tbl_update(val2) VALUES('world');
+// insert into test.tbl_update(val2) VALUES('golang');
+// UPDATE test.tbl_update SET val2='WORLD' where val1=2;
+// UPDATE test.tbl_update SET val2='XXX';
+
 // create table test.tbl_unique( val1 tinyint not null unique, val2 char(10));
 // insert into  test.tbl_unique values (1, 'abc');
 // insert into  test.tbl_unique values (2, 'def');
@@ -316,3 +344,42 @@ insert into test.tbl_blob values('abcdefghijabcdefghijabcdefghijabcdefghijabcdef
 // insert into  test.tbl_alter2 values (2, 'def', 99);
 // alter  table  test.tbl_alter2 drop column val3;
 // UPdATE test.tbl_alter2 SET val2 = 'TYU' WHERE val1 = 2;
+
+
+
+// 待做下面这些类的unsigned
+// CREATE TABLE test.tbl_smallint (val smallint);
+// INSERT INTO  test.tbl_smallint VALUES(32767);
+// INSERT INTO  test.tbl_smallint VALUES(NULL);
+// INSERT INTO  test.tbl_smallint VALUES(-32768);
+
+// CREATE TABLE test.tbl_mediumint (val mediumint);
+// INSERT INTO  test.tbl_mediumint VALUES(-8388608);
+// INSERT INTO  test.tbl_mediumint VALUES(NULL);
+// INSERT INTO  test.tbl_mediumint VALUES(8388607);
+
+// CREATE TABLE test.tbl_int (val int);
+// INSERT INTO  test.tbl_int VALUES(-2147483648);
+// INSERT INTO  test.tbl_int VALUES(NULL);
+// INSERT INTO  test.tbl_int VALUES(2147483647);
+
+// CREATE TABLE test.tbl_bigint (val bigint);
+// INSERT INTO  test.tbl_bigint VALUES(-9223372036854775808);
+// INSERT INTO  test.tbl_bigint VALUES( 9223372036854775807);
+// INSERT INTO  test.tbl_bigint VALUES(NULL);
+
+// CREATE TABLE test.tbl_float (val float);
+// INSERT INTO  test.tbl_float VALUES(-3.402823466E+38);
+// INSERT INTO  test.tbl_float VALUES(-1.175494351E-38);
+// INSERT INTO  test.tbl_float VALUES( 1.175494351E+38);
+// INSERT INTO  test.tbl_float VALUES( 1.175494351E-38);
+// INSERT INTO  test.tbl_float VALUES( 3.402823466351E+38);
+// INSERT INTO  test.tbl_float VALUES( NULL);
+
+// CREATE TABLE test.tbl_double (val double);
+// INSERT INTO  test.tbl_double VALUES(-1.7976931348623157E+308);
+// INSERT INTO  test.tbl_double VALUES(-2.2250738585072014E-308);
+// INSERT INTO  test.tbl_double VALUES(0);
+// INSERT INTO  test.tbl_double VALUES( 2.2250738585072014E-308);
+// INSERT INTO  test.tbl_double VALUES( 1.7976931348623157E+308);
+// INSERT INTO  test.tbl_double VALUES( NULL );

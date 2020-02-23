@@ -366,7 +366,7 @@ func NewHandshakeResponse41(handshake *HandshakeV10, username string, password s
 	ret.MaxPacketSize = 1 * 1024 * 1024
 	ret.CharacterSet = Utf8mb4
 	ret.Username = StringNul(username)
-	ret.authenticationMethod = ClearPasswordAuthentication// authenticationMethod
+	ret.authenticationMethod = SecurePasswordAuthentication// ClearPasswordAuthentication// authenticationMethod
 
 	switch(ret.authenticationMethod){
 		case OldPasswordAuthentication:
@@ -383,6 +383,12 @@ func NewHandshakeResponse41(handshake *HandshakeV10, username string, password s
 
 	// key-values
 	return ret
+}
+func(this *HandshakeResponse41)AddKeyValue(key, value string){
+	if this.KeyValues == nil {
+		this.KeyValues = make(map[string] string)
+	}
+	this.KeyValues[key] = value
 }
 func(this *HandshakeResponse41)Decode() []byte{
 	ret := make([]byte, 0)
@@ -415,13 +421,16 @@ func(this *HandshakeResponse41)Decode() []byte{
 		ret = append(ret, r.Decode()...)
 	}
 	if CapabilityFlag_CLIENT_CONNECT_ATTRS.isSet(this.CapabilityFlags){
+		fmt.Println("Output HandshakeResponse41 KeyValues:{")
 		buf := make([]byte, 0)
 		for key, val := range this.KeyValues {
+			fmt.Println(key, ",", val, ",")
 			k := StringLenenc(key)
 			buf = append(buf, k.Decode()...)
 			v := StringLenenc(val)
 			buf = append(buf, v.Decode()...)
 		}
+		fmt.Println("}")
 		ret = append(ret, UintLenenc(len(buf)).Decode()...)
 		ret = append(ret, buf...)
 	}
@@ -494,10 +503,25 @@ type ComInitDb struct{
 	Com Uint1 // 0x02
 	SchemaName StringEof
 }
-type ComQuery struct{
+type ComQueryType struct{
 	Com Uint1 // 0x03
 	Query StringEof
 }
+func NewComQuery(com string) *ComQueryType{
+	ret := &ComQueryType{}
+	ret.Com = 0x03
+	ret.Query = StringEof(com)
+	return ret
+}
+func(this *ComQueryType)Decode() []byte{
+	ret := this.Com.Decode()
+	ret = append(ret, this.Query.Decode()...)
+	return ret
+}
+func (this ComQueryType) String() string{
+	return "{Type:" + string(this.Query) + "}"
+}
+
 // TODO: 暂时先跳过
 type ComQueryResponse struct{
 }
@@ -663,7 +687,7 @@ const(
 	ColumnTypeBit        ColumnType = 0x10
 	ColumnTypeTimestamp2 ColumnType = 0x11
 	ColumnTypeDatetime2  ColumnType = 0x12
-	ColumnTypeTime2      ColumnType = 0x13
+	ColumnTypeTime2      ColumnType = 0x13 // 5.6.46中开始用到
 	ColumnTypeNewDecimal ColumnType = 0xf6
 	ColumnTypeEnum       ColumnType = 0xf7
 	ColumnTypeSet        ColumnType = 0xf8
@@ -692,10 +716,13 @@ func init(){
 	columnMetaDefLength[ColumnTypeEnum] = 2
 	columnMetaDefLength[ColumnTypeSet] = 2
 	columnMetaDefLength[ColumnTypeBit] = 2 // 在文档上写的是0，但实际看起来是2（5.5.62）
+	columnMetaDefLength[ColumnTypeTimestamp2] = 0 // 在5.6.46中发现这个
 	columnMetaDefLength[ColumnTypeDate] = 0
 	columnMetaDefLength[ColumnTypeDatetime] = 0
+	columnMetaDefLength[ColumnTypeDatetime2] = 1 // mysql5.6.46中tbl_datetime类型
 	columnMetaDefLength[ColumnTypeTimestamp] = 0
 	columnMetaDefLength[ColumnTypeTime] = 0 // 文档中就是写了“--”
+	columnMetaDefLength[ColumnTypeTime2] = 1
 	columnMetaDefLength[ColumnTypeTiny] = 0
 	columnMetaDefLength[ColumnTypeShort] = 0
 	columnMetaDefLength[ColumnTypeInt24] = 0
