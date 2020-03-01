@@ -1,21 +1,25 @@
 package mysql
-import "fmt"
-import "bytes"
-import "sort"
-import "time"
+
+import (
+	"bytes"
+	"fmt"
+	"sort"
+	"time"
+)
 
 // 把Mysql的数据类型转换成字节流
-type Decoder interface{
+type Decoder interface {
 	Decode() []byte
 }
+
 // 把定长的字节流转化成对应的Mysql的数据类型
-type FixLengthEncoder interface{
+type FixLengthEncoder interface {
 	Encode([]byte)
 }
 
 // 各个字节位运算的掩码
 const (
-	byte0 = 0xFF <<(iota*8)
+	byte0 = 0xFF << (iota * 8)
 	byte1
 	byte2
 	byte3
@@ -24,164 +28,190 @@ const (
 	byte6
 	byte7
 )
+
 // 字节数组转成uint64
-func byte2uint64(b []byte, maxLen int) uint64{
+func byte2uint64(b []byte, maxLen int) uint64 {
 	n := len(b)
 	masks := [8]uint64{byte0, byte1, byte2, byte3, byte4, byte5, byte6, byte7}
-	if maxLen > len(masks){
+	if maxLen > len(masks) {
 		maxLen = len(masks)
 	}
-	if maxLen > n{
+	if maxLen > n {
 		maxLen = n
 	}
 	var ret uint64 = uint64(b[0])
-	for i := 0; i < maxLen; i++{
-		ret |= ((uint64(b[i]) << (uint(i)*8)) & masks[i])
+	for i := 0; i < maxLen; i++ {
+		ret |= ((uint64(b[i]) << (uint(i) * 8)) & masks[i])
 	}
 	return ret
 }
+
 // uint64转成字节
-func uint642bytebuf(n uint64, maxLen int, buf []byte){
+func uint642bytebuf(n uint64, maxLen int, buf []byte) {
 	masks := [8]uint64{byte0, byte1, byte2, byte3, byte4, byte5, byte6, byte7}
-	for i := 0; i < maxLen; i++{
-		buf[i] = byte((n & masks[i]) >> (uint(i)*8))
+	for i := 0; i < maxLen; i++ {
+		buf[i] = byte((n & masks[i]) >> (uint(i) * 8))
 	}
 }
-func uint642byte(n uint64, maxLen int) []byte{
+func uint642byte(n uint64, maxLen int) []byte {
 	ret := make([]byte, maxLen)
 	uint642bytebuf(n, maxLen, ret)
 	return ret
 }
 
 const (
-	Uint1Length = 1
-	Uint2Length = 2
-	Uint3Length = 3
-	Uint4Length = 4
-	Uint6Length = 6
-	Uint8Length = 8
+	Uint1Length      = 1
+	Uint2Length      = 2
+	Uint3Length      = 3
+	Uint4Length      = 4
+	Uint6Length      = 6
+	Uint8Length      = 8
 	UintLenencLength = 9 // 最长9个字节
 )
+
 type Uint1 uint
-func (this *Uint1) Encode(b []byte){
+
+func (this *Uint1) Encode(b []byte) {
 	*this = Uint1(b[0])
 }
-func (this *Uint1) Decode() []byte{
+func (this *Uint1) Decode() []byte {
 	return uint642byte(uint64(*this), Uint1Length)
 }
 
 type Uint2 uint
-func (this *Uint2) Encode(b []byte){
+
+func (this *Uint2) Encode(b []byte) {
 	*this = Uint2(byte2uint64(b, Uint2Length))
 }
-func (this *Uint2) Decode() []byte{
+func (this *Uint2) Decode() []byte {
 	return uint642byte(uint64(*this), Uint2Length)
 }
 
 type Uint3 uint
-func (this *Uint3) Encode(b []byte){
+
+func (this *Uint3) Encode(b []byte) {
 	*this = Uint3(byte2uint64(b, Uint3Length))
 }
-func (this *Uint3) Decode() []byte{
+func (this *Uint3) Decode() []byte {
 	return uint642byte(uint64(*this), Uint3Length)
 }
 
 type Uint4 uint
-func (this *Uint4) Encode(b []byte){
+
+func (this *Uint4) Encode(b []byte) {
 	*this = Uint4(byte2uint64(b, Uint4Length))
 }
-func (this *Uint4) Decode() []byte{
+func (this *Uint4) Decode() []byte {
 	return uint642byte(uint64(*this), Uint4Length)
 }
 
 type Uint6 uint64
-func (this *Uint6) Encode(b []byte){
+
+func (this *Uint6) Encode(b []byte) {
 	*this = Uint6(byte2uint64(b, Uint6Length))
 }
-func (this *Uint6) Decode() []byte{
+func (this *Uint6) Decode() []byte {
 	return uint642byte(uint64(*this), Uint6Length)
 }
 
 type Uint8 uint64
-func (this *Uint8) Encode(b []byte){
+
+func (this *Uint8) Encode(b []byte) {
 	*this = Uint8(byte2uint64(b, Uint8Length))
 }
-func (this *Uint8) Decode() []byte{
+func (this *Uint8) Decode() []byte {
 	return uint642byte(uint64(*this), Uint8Length)
 }
 
 type UintLenenc uint64
-func (this UintLenenc) Decode() []byte{
+
+func (this UintLenenc) Decode() []byte {
 	var l int
 	var ret []byte
 	var head byte
 	if this < 251 {
 		l = 1
 		head = byte(this)
-	}else if this < (1<<16) {
+	} else if this < (1 << 16) {
 		l = 1 + 2
 		head = 0xFC
-	}else if this < (1<<24) {
+	} else if this < (1 << 24) {
 		l = 1 + 3
 		head = 0xFD
-	}else{
+	} else {
 		l = 1 + 8
 		head = 0xFE
 	}
 	ret = make([]byte, l)
 	ret[0] = head
-	if l > 1{
+	if l > 1 {
 		uint642bytebuf(uint64(this), l-1, ret[1:])
 	}
 	return ret
 }
 
 type StringFix string
-func (this *StringFix) Decode() []byte{
-	return []byte(*this)
-}
-type StringNul string
-func (this *StringNul) Decode() []byte{
-	return append([]byte(*this), 0x00)
-}
-type StringLenenc string
-func (this *StringLenenc) Decode() []byte{
-	return append(UintLenenc(len(*this)).Decode(), []byte(*this)...)
-}
-type StringEof string
-func (this *StringEof) Decode() []byte{
+
+func (this *StringFix) Decode() []byte {
 	return []byte(*this)
 }
 
-type OKPacket struct{
-	Header Uint1
-	AffectedRows UintLenenc
-	LastInsertId UintLenenc
-	StatusFlags  Uint2
-	Warnings     Uint2
-	Info         StringLenenc
+type StringNul string
+
+func (this *StringNul) Decode() []byte {
+	return append([]byte(*this), 0x00)
+}
+
+type StringLenenc string
+
+func (this *StringLenenc) Decode() []byte {
+	return append(UintLenenc(len(*this)).Decode(), []byte(*this)...)
+}
+
+type StringEof string
+
+func (this *StringEof) Decode() []byte {
+	return []byte(*this)
+}
+
+type OKPacket struct {
+	Header              Uint1
+	AffectedRows        UintLenenc
+	LastInsertId        UintLenenc
+	StatusFlags         Uint2
+	Warnings            Uint2
+	Info                StringLenenc
 	SessionStateChanges StringLenenc
 }
-func (this OKPacket) String() string{
+
+func (this OKPacket) String() string {
 	return fmt.Sprintf("{Type:OKPacket, Header:%v, AffectedRows:%v, LastInsertId:%v, StatusFlags:%v, Warnings:%v, Info:%v, SessionStateChanges:%v}", this.Header, this.AffectedRows, this.LastInsertId, this.StatusFlags, this.Warnings, this.Info, this.SessionStateChanges)
 }
 
-type ErrPacket struct{
-	Header Uint1
-	ErrorCode Uint2
+type ErrPacket struct {
+	Header         Uint1
+	ErrorCode      Uint2
 	SqlStateMarker StringFix
-	SqlState StringFix
-	ErrorMessage StringEof
+	SqlState       StringFix
+	ErrorMessage   StringEof
 }
-func (this ErrPacket) String() string{
+
+func (this ErrPacket) String() string {
 	return fmt.Sprintf("{Type:ErrPacket, Header:%v, ErrorCode:%v, SqlStateMarker:%v, SqlState:%v, ErrorMessage:%v,", this.Header, this.ErrorCode, this.SqlStateMarker, this.SqlState, this.ErrorMessage)
 }
-type EOFPacket struct{
+
+type EOFPacket struct {
+	Header           Uint1
+	NumberOfWarnings Uint2
+	StatusFlags      Uint2
 }
-func (this EOFPacket) String() string{
-	return "EOFPacket"
+
+func (this EOFPacket) String() string {
+	return fmt.Sprintf("{Type:EOFPacket, Header:%v, NumberOfWarnings:%v, StatusFlags:%v}", this.Header, this.NumberOfWarnings, this.StatusFlags)
 }
+
 type CapalibilityFlagType int
+
 const (
 	CapabilityFlag_CLIENT_LONG_PASSWORD                  CapalibilityFlagType = 0x00000001 // Use the improved version of Old Password Authentication.Assumed to be set since 4.1.1.
 	CapabilityFlag_CLIENT_FOUND_ROWS                     CapalibilityFlagType = 0x00000002 // Send found rows instead of affected rows in EOF_Packet.
@@ -209,12 +239,15 @@ const (
 	CapabilityFlag_CLIENT_SESSION_TRACK                  CapalibilityFlagType = 0x00800000 // Server:Can set SERVER_SESSION_STATE_CHANGED in the Status Flags and send session-state change data after a OK packet.Client:Expects the server to send sesson-state changes after a OK packet.
 	CapabilityFlag_CLIENT_DEPRECATE_EOF                  CapalibilityFlagType = 0x01000000 // Server:Can send OK after a Text Resultset. Client:Expects an OK (instead of EOF) after the resultset rows of a Text Resultset.
 )
-func (this CapalibilityFlagType)isSet(flags Uint4) bool{
-	return Uint4(this) & flags != 0
+
+func (this CapalibilityFlagType) isSet(flags Uint4) bool {
+	return Uint4(this)&flags != 0
 }
-var capabilityFlagDesc map[CapalibilityFlagType] string
-func init(){
-	capabilityFlagDesc = make(map[CapalibilityFlagType] string, 25)
+
+var capabilityFlagDesc map[CapalibilityFlagType]string
+
+func init() {
+	capabilityFlagDesc = make(map[CapalibilityFlagType]string, 25)
 	capabilityFlagDesc[CapabilityFlag_CLIENT_LONG_PASSWORD] = "CLIENT_LONG_PASSWORD"
 	capabilityFlagDesc[CapabilityFlag_CLIENT_FOUND_ROWS] = "CLIENT_FOUND_ROWS"
 	capabilityFlagDesc[CapabilityFlag_CLIENT_LONG_FLAG] = "CLIENT_LONG_FLAG"
@@ -243,117 +276,128 @@ func init(){
 }
 
 type ServerStatusType Uint2
-const(
+
+const (
 	SERVER_STATUS_IN_TRANS             ServerStatusType = 0x0001 //a transaction is active
 	SERVER_STATUS_AUTOCOMMIT           ServerStatusType = 0x0002 //auto-commit is enabled
-	SERVER_MORE_RESULTS_EXISTS         ServerStatusType = 0x0008	 
-	SERVER_STATUS_NO_GOOD_INDEX_USED   ServerStatusType = 0x0010	 
-	SERVER_STATUS_NO_INDEX_USED        ServerStatusType = 0x0020	 
+	SERVER_MORE_RESULTS_EXISTS         ServerStatusType = 0x0008
+	SERVER_STATUS_NO_GOOD_INDEX_USED   ServerStatusType = 0x0010
+	SERVER_STATUS_NO_INDEX_USED        ServerStatusType = 0x0020
 	SERVER_STATUS_CURSOR_EXISTS        ServerStatusType = 0x0040 //Used by Binary Protocol Resultset to signal that COM_STMT_FETCH must be used to fetch the row-data.
-	SERVER_STATUS_LAST_ROW_SENT        ServerStatusType = 0x0080	 
-	SERVER_STATUS_DB_DROPPED           ServerStatusType = 0x0100	 
-	SERVER_STATUS_NO_BACKSLASH_ESCAPES ServerStatusType = 0x0200	 
-	SERVER_STATUS_METADATA_CHANGED     ServerStatusType = 0x0400	 
-	SERVER_QUERY_WAS_SLOW              ServerStatusType = 0x0800	 
-	SERVER_PS_OUT_PARAMS               ServerStatusType = 0x1000	 
+	SERVER_STATUS_LAST_ROW_SENT        ServerStatusType = 0x0080
+	SERVER_STATUS_DB_DROPPED           ServerStatusType = 0x0100
+	SERVER_STATUS_NO_BACKSLASH_ESCAPES ServerStatusType = 0x0200
+	SERVER_STATUS_METADATA_CHANGED     ServerStatusType = 0x0400
+	SERVER_QUERY_WAS_SLOW              ServerStatusType = 0x0800
+	SERVER_PS_OUT_PARAMS               ServerStatusType = 0x1000
 	SERVER_STATUS_IN_TRANS_READONLY    ServerStatusType = 0x2000 //in a read-only transaction
-	SERVER_SESSION_STATE_CHANGED       ServerStatusType = 0x4000// connection state information has changed
+	SERVER_SESSION_STATE_CHANGED       ServerStatusType = 0x4000 // connection state information has changed
 )
 
 const (
 	Utf8mb4 = 255
 )
-func capabilityFlagsString(buf *bytes.Buffer, capabilityFlags Uint4){
+
+func capabilityFlagsString(buf *bytes.Buffer, capabilityFlags Uint4) {
 	keys := make([]int, 0)
-	for k := range(capabilityFlagDesc){
+	for k := range capabilityFlagDesc {
 		keys = append(keys, int(k))
 	}
 	ks := sort.IntSlice(keys)
 	ks.Sort()
-	for i, k := range(keys){
+	for i, k := range keys {
 		v := int(capabilityFlags) & int(k)
 		var x int
-		if v != 0{
+		if v != 0 {
 			x = 1
-		}else{
+		} else {
 			x = 0
 		}
 		buf.WriteString(fmt.Sprintf("%s=%v, ", capabilityFlagDesc[CapalibilityFlagType(k)], x))
-		if i != 0 && i % 4 == 0{
-			buf.WriteString("\n");
+		if i != 0 && i%4 == 0 {
+			buf.WriteString("\n")
 		}
 	}
 }
-type HandshakeV10 struct{
-	Version Uint1
-	ServerVersion StringNul
-	ConnectionId Uint4
-	AuthPluginDataPart1 StringFix
-	Filler Uint1
+
+type HandshakeV10 struct {
+	Version                   Uint1
+	ServerVersion             StringNul
+	ConnectionId              Uint4
+	AuthPluginDataPart1       StringFix
+	Filler                    Uint1
 	CapabilityFlagsLowerBytes Uint2
-	CharacterSet Uint1
-	StatusFlags Uint2
+	CharacterSet              Uint1
+	StatusFlags               Uint2
 	CapabilityFlagsUpperBytes Uint2
-	LengthOfAuthPluginData Uint1
-	Reserved StringFix
-	AuthPluginDataPart2 StringFix
-	AuthPluginName StringNul
+	LengthOfAuthPluginData    Uint1
+	Reserved                  StringFix
+	AuthPluginDataPart2       StringFix
+	AuthPluginName            StringNul
 
 	CapabilityFlags Uint4
 }
-func (this HandshakeV10) String() string{
+
+func (this HandshakeV10) String() string {
 	buf := bytes.NewBufferString(fmt.Sprintf("{Type:HandshakeV10, Version:%v, ServerVersion:%v, ConnectionId:%v, AuthPluginDataPart1:%v, AuthPluginDataPart2:%v, CapabilityFlags:%v(%v|%v), CharacterSet:%v, StatusFlags:%v, LengthOfAuthPluginData:%v, AuthPluginName:%v\n", this.Version, this.ServerVersion, this.ConnectionId, this.AuthPluginDataPart1, this.AuthPluginDataPart2, this.CapabilityFlags, this.CapabilityFlagsUpperBytes, this.CapabilityFlagsLowerBytes, this.CharacterSet, this.StatusFlags, this.LengthOfAuthPluginData, this.AuthPluginName))
 	capabilityFlagsString(buf, this.CapabilityFlags)
 	buf.WriteString("}")
 	return buf.String()
 }
+
 // 在 3.21.0 之前才用V9和Response320，所以就不做了
 //type HandshakeV9 struct{
 //}
 // type HandshakeResponse320 struct{
 //}
 type AuthenticationMethodType string
+
 const (
 	OldPasswordAuthentication    AuthenticationMethodType = "mysql_old_password"
 	SecurePasswordAuthentication AuthenticationMethodType = "mysql_native_password"
 	ClearPasswordAuthentication  AuthenticationMethodType = "mysql_clear_password"
 )
-type AuthMethodType func(string, string)string
-var authMethod map[AuthenticationMethodType] AuthMethodType
-func init(){
-	authMethod = make(map[AuthenticationMethodType] AuthMethodType, 3)
+
+type AuthMethodType func(string, string) string
+
+var authMethod map[AuthenticationMethodType]AuthMethodType
+
+func init() {
+	authMethod = make(map[AuthenticationMethodType]AuthMethodType, 3)
 	authMethod[OldPasswordAuthentication] = oldAuth
 	authMethod[SecurePasswordAuthentication] = nativeAuth
 	authMethod[ClearPasswordAuthentication] = clearAuth
 }
-type HandshakeResponse41 struct{
-	CapabilityFlags Uint4
-	MaxPacketSize   Uint4
-	CharacterSet    Uint1
-	Username        StringNul
-	AuthResponse    string // 这个字段在不同flag下会有不同格式
-	Database        StringNul
-	AuthPluginName  StringNul
-	LengthOfAllKeyValues UintLenenc  // 字节长度
-	KeyValues       map[string] string
+
+type HandshakeResponse41 struct {
+	CapabilityFlags      Uint4
+	MaxPacketSize        Uint4
+	CharacterSet         Uint1
+	Username             StringNul
+	AuthResponse         string // 这个字段在不同flag下会有不同格式
+	Database             StringNul
+	AuthPluginName       StringNul
+	LengthOfAllKeyValues UintLenenc // 字节长度
+	KeyValues            map[string]string
 	authenticationMethod AuthenticationMethodType
 }
-func (this HandshakeResponse41)String() string{
+
+func (this HandshakeResponse41) String() string {
 	buf := bytes.NewBufferString(fmt.Sprintf("{Type:HandshakeResponse41, CapabilityFlags=%v, MaxPacketSize=%v, CharacterSet=%v, Username=%v, AuthResponse=%v, Database=%v, AuthPluginName=%v, LengthOfAllKeyValues=%v, authenticationMethod=%v\n", this.CapabilityFlags, this.MaxPacketSize, this.CharacterSet, this.Username, this.AuthResponse, this.Database, this.AuthPluginName, this.LengthOfAllKeyValues, this.authenticationMethod))
 	capabilityFlagsString(buf, this.CapabilityFlags)
 	buf.WriteString("}")
 	return buf.String()
 }
-func (this *HandshakeResponse41)clrFlag(flag Uint4){
+func (this *HandshakeResponse41) clrFlag(flag Uint4) {
 	this.CapabilityFlags = this.CapabilityFlags & (^flag)
 }
-func (this *HandshakeResponse41)setFlag(flag Uint4){
+func (this *HandshakeResponse41) setFlag(flag Uint4) {
 	this.CapabilityFlags = Uint4(this.CapabilityFlags) | flag
 }
-func (this *HandshakeResponse41)tstFlag(flag Uint4) bool{
+func (this *HandshakeResponse41) tstFlag(flag Uint4) bool {
 	return (this.CapabilityFlags & flag) != 0
 }
-func NewHandshakeResponse41(handshake *HandshakeV10, username string, password string, database string, authenticationMethod AuthenticationMethodType) *HandshakeResponse41{
+func NewHandshakeResponse41(handshake *HandshakeV10, username string, password string, database string, authenticationMethod AuthenticationMethodType) *HandshakeResponse41 {
 	ret := &HandshakeResponse41{}
 	// PROTOCOL_41强制支持；这里不支持SSL，后面再加上；PLUGIN_AUTH强制支持
 	ret.CapabilityFlags = handshake.CapabilityFlags
@@ -366,16 +410,16 @@ func NewHandshakeResponse41(handshake *HandshakeV10, username string, password s
 	ret.MaxPacketSize = 1 * 1024 * 1024
 	ret.CharacterSet = Utf8mb4
 	ret.Username = StringNul(username)
-	ret.authenticationMethod = SecurePasswordAuthentication// ClearPasswordAuthentication// authenticationMethod
+	ret.authenticationMethod = SecurePasswordAuthentication // ClearPasswordAuthentication// authenticationMethod
 
-	switch(ret.authenticationMethod){
-		case OldPasswordAuthentication:
+	switch ret.authenticationMethod {
+	case OldPasswordAuthentication:
 		ret.AuthResponse = password
 
-		case SecurePasswordAuthentication:
+	case SecurePasswordAuthentication:
 		ret.AuthResponse = password
 
-		case ClearPasswordAuthentication:
+	case ClearPasswordAuthentication:
 		ret.AuthResponse = password
 	}
 	ret.Database = StringNul(database)
@@ -384,24 +428,24 @@ func NewHandshakeResponse41(handshake *HandshakeV10, username string, password s
 	// key-values
 	return ret
 }
-func(this *HandshakeResponse41)AddKeyValue(key, value string){
+func (this *HandshakeResponse41) AddKeyValue(key, value string) {
 	if this.KeyValues == nil {
-		this.KeyValues = make(map[string] string)
+		this.KeyValues = make(map[string]string)
 	}
 	this.KeyValues[key] = value
 }
-func(this *HandshakeResponse41)Decode() []byte{
+func (this *HandshakeResponse41) Decode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, this.CapabilityFlags.Decode()...)
 	ret = append(ret, this.MaxPacketSize.Decode()...)
 	ret = append(ret, this.CharacterSet.Decode()...)
 	ret = append(ret, make([]byte, 23)...)
 	ret = append(ret, this.Username.Decode()...)
-	if CapabilityFlag_CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA.isSet(this.CapabilityFlags){
+	if CapabilityFlag_CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA.isSet(this.CapabilityFlags) {
 		l := UintLenenc(len(this.AuthResponse))
 		ret = append(ret, l.Decode()...)
 		r := StringFix(this.AuthResponse)
-		ret = append(ret, r.Decode()...)		
+		ret = append(ret, r.Decode()...)
 	} else if CapabilityFlag_CLIENT_SECURE_CONNECTION.isSet(this.CapabilityFlags) {
 		l := UintLenenc(1)
 		ret = append(ret, l.Decode()...)
@@ -412,79 +456,86 @@ func(this *HandshakeResponse41)Decode() []byte{
 		ret = append(ret, r.Decode()...)
 	}
 
-	if CapabilityFlag_CLIENT_CONNECT_WITH_DB.isSet(this.CapabilityFlags){
+	if CapabilityFlag_CLIENT_CONNECT_WITH_DB.isSet(this.CapabilityFlags) {
 		r := StringNul(this.Database)
 		ret = append(ret, r.Decode()...)
 	}
-	if CapabilityFlag_CLIENT_PLUGIN_AUTH.isSet(this.CapabilityFlags){
+	if CapabilityFlag_CLIENT_PLUGIN_AUTH.isSet(this.CapabilityFlags) {
 		r := StringNul(this.AuthPluginName)
 		ret = append(ret, r.Decode()...)
 	}
-	if CapabilityFlag_CLIENT_CONNECT_ATTRS.isSet(this.CapabilityFlags){
-		fmt.Println("Output HandshakeResponse41 KeyValues:{")
+	if CapabilityFlag_CLIENT_CONNECT_ATTRS.isSet(this.CapabilityFlags) {
+		// fmt.Println("Output HandshakeResponse41 KeyValues:{")
 		buf := make([]byte, 0)
 		for key, val := range this.KeyValues {
-			fmt.Println(key, ",", val, ",")
+			// fmt.Println(key, ",", val, ",")
 			k := StringLenenc(key)
 			buf = append(buf, k.Decode()...)
 			v := StringLenenc(val)
 			buf = append(buf, v.Decode()...)
 		}
-		fmt.Println("}")
+		// fmt.Println("}")
 		ret = append(ret, UintLenenc(len(buf)).Decode()...)
 		ret = append(ret, buf...)
 	}
 	return ret
 }
 
-type AuthMoreData struct{
+type AuthMoreData struct {
 	Version    Uint1 // 0x01
 	PluginData StringEof
 }
-func NewAuthMoreData() *AuthMoreData{
+
+func NewAuthMoreData() *AuthMoreData {
 	ret := &AuthMoreData{}
 	return ret
 }
-func(this *AuthMoreData)Decode() []byte{
+func (this *AuthMoreData) Decode() []byte {
 	buf := bytes.NewBuffer(this.Version.Decode())
-	if _, err := buf.Write(this.PluginData.Decode()); err != nil{
+	if _, err := buf.Write(this.PluginData.Decode()); err != nil {
 		return nil
 	}
 	return buf.Bytes()
 }
-type AuthSwitchRequest struct{
-	Version        Uint1        // 0xFE
+
+type AuthSwitchRequest struct {
+	Version        Uint1 // 0xFE
 	PluginName     StringNul
 	AuthPluginData StringEof
 }
-func NewAuthSwitchRequest() *AuthSwitchRequest{
+
+func NewAuthSwitchRequest() *AuthSwitchRequest {
 	ret := &AuthSwitchRequest{}
 	return ret
 }
-func (this AuthSwitchRequest)String() string{
+func (this AuthSwitchRequest) String() string {
 	return fmt.Sprintf("{Type:AuthSwitchRequest, Version:%v, PluginName:%v, AuthPluginData:%v}", this.Version, string(this.PluginName), string(this.AuthPluginData))
 }
-type OldAuthSwitchRequest struct{
+
+type OldAuthSwitchRequest struct {
 	Version Uint1 // 0xFE
 }
-func (this OldAuthSwitchRequest)String() string{
+
+func (this OldAuthSwitchRequest) String() string {
 	return fmt.Sprintf("{Type:OldAuthSwitchRequest, Version:%v}", this.Version)
 }
-func NewOldAuthSwitchRequest() *OldAuthSwitchRequest{
+func NewOldAuthSwitchRequest() *OldAuthSwitchRequest {
 	ret := &OldAuthSwitchRequest{}
 	return ret
 }
-type AuthSwitchResponse struct{
+
+type AuthSwitchResponse struct {
 	AuthPluginResponse StringEof
 }
-func NewAuthSwitchResponse() *AuthSwitchResponse{
+
+func NewAuthSwitchResponse() *AuthSwitchResponse {
 	ret := &AuthSwitchResponse{}
 	return ret
 }
-func(this *AuthSwitchResponse)Decode() []byte{
+func (this *AuthSwitchResponse) Decode() []byte {
 	return this.AuthPluginResponse.Decode()
 }
-func (this AuthSwitchResponse)String() string{
+func (this AuthSwitchResponse) String() string {
 	buf := bytes.NewBufferString(fmt.Sprintf("{Type:AuthSwitchResponse, AuthPluginResponse:["))
 	for i := 0; i < len(this.AuthPluginResponse); i++ {
 		buf.WriteString(fmt.Sprintf("%2x ", this.AuthPluginResponse[i]))
@@ -493,99 +544,104 @@ func (this AuthSwitchResponse)String() string{
 	return buf.String()
 }
 
-type ComSleep struct{
+type ComSleep struct {
 	Com Uint1 // 0x00
 }
-type ComQuit struct{
+type ComQuit struct {
 	Com Uint1 // 0x01
 }
-type ComInitDb struct{
-	Com Uint1 // 0x02
+type ComInitDb struct {
+	Com        Uint1 // 0x02
 	SchemaName StringEof
 }
-type ComQueryType struct{
-	Com Uint1 // 0x03
+type ComQueryType struct {
+	Com   Uint1 // 0x03
 	Query StringEof
 }
-func NewComQuery(com string) *ComQueryType{
+
+func NewComQuery(com string) *ComQueryType {
 	ret := &ComQueryType{}
 	ret.Com = 0x03
 	ret.Query = StringEof(com)
 	return ret
 }
-func(this *ComQueryType)Decode() []byte{
+func (this *ComQueryType) Decode() []byte {
 	ret := this.Com.Decode()
 	ret = append(ret, this.Query.Decode()...)
 	return ret
 }
-func (this ComQueryType) String() string{
+func (this ComQueryType) String() string {
 	return "{Type:" + string(this.Query) + "}"
 }
 
 // TODO: 暂时先跳过
-type ComQueryResponse struct{
+type ComQueryResponse struct {
 }
+
 // deprecated since 5.7.11
 //type ComFieldList struct{
 //}
-type ComCreateDb struct{
-	Com Uint1 // 0x05
+type ComCreateDb struct {
+	Com        Uint1 // 0x05
 	SchemaName StringEof
 }
-type ComDropDb struct{
-	Com Uint1 // 0x06
+type ComDropDb struct {
+	Com        Uint1 // 0x06
 	SchemaName StringEof
 }
-type ComShutdown struct{
-	Com Uint1 // 0x08
+type ComShutdown struct {
+	Com          Uint1 // 0x08
 	ShutdownType Uint1
 }
-type ComStatistics struct{
+type ComStatistics struct {
 	Com Uint1 // 0x09
 }
-type ComProcessInfo struct{
+type ComProcessInfo struct {
 	Com Uint1 // 0x0a
 }
-type ComPing struct{
+type ComPing struct {
 	Com Uint1 // 0x0e
 }
-func NewComPing() *ComPing{
+
+func NewComPing() *ComPing {
 	ret := &ComPing{}
 	ret.Com = 0x0e
 	return ret
 }
-func(this *ComPing)Decode() []byte{
+func (this *ComPing) Decode() []byte {
 	return this.Com.Decode()
 }
-type ComBinlogDump struct{
+
+type ComBinlogDump struct {
 	Com            Uint1 // 0x12
 	BinlogPos      Uint4
 	Flags          Uint2
 	ServerId       Uint4
 	BinlogFilename StringEof
 }
-func NewComBinlogDump() *ComBinlogDump{
+
+func NewComBinlogDump(serverId int, filename string, binlogPos uint32) *ComBinlogDump {
 	ret := &ComBinlogDump{}
 	ret.Com = 0x12
-	ret.BinlogPos = 4
+	ret.BinlogPos = Uint4(binlogPos)
 	ret.Flags = 0
-	ret.ServerId = 2
-	ret.BinlogFilename = StringEof("mysql-bin.000001")
+	ret.ServerId = Uint4(serverId)
+	ret.BinlogFilename = StringEof(filename)
 	return ret
 }
-func(this *ComBinlogDump)Decode() []byte{
+func (this *ComBinlogDump) Decode() []byte {
 	ret := this.Com.Decode()
 	ret = append(ret, this.BinlogPos.Decode()...)
 	ret = append(ret, this.Flags.Decode()...)
 	ret = append(ret, this.ServerId.Decode()...)
 	ret = append(ret, this.BinlogFilename.Decode()...)
-	return ret;
+	return ret
 }
-func (this ComBinlogDump) String() string{
+func (this ComBinlogDump) String() string {
 	return fmt.Sprintf("{Type:ComBinlogDump, Com:%v, BinlogPos:%v, Flags:%v, ServerId:%v, BinlogFilename:%v}", this.Com, this.BinlogPos, this.Flags, this.ServerId, this.BinlogFilename)
 }
 
-type ComBinlogDumpGTID struct{
+type ComBinlogDumpGTID struct {
 	Com               Uint1 // 0x1e
 	Flags             Uint2
 	ServerId          Uint4
@@ -595,14 +651,15 @@ type ComBinlogDumpGTID struct{
 	DataSize          Uint4     // BINLOG_THROUGH_GTID
 	Data              StringFix // BINLOG_THROUGH_GTID
 }
-type ComTableDump struct{
+type ComTableDump struct {
 	Com          Uint1 // 0x13
 	DatabaseLen  Uint1
 	DatabaseName StringFix
 	TableLen     Uint1
 	TableName    StringFix
 }
-func NewComTableDump() *ComTableDump{
+
+func NewComTableDump() *ComTableDump {
 	ret := &ComTableDump{}
 	ret.Com = 0x13
 	ret.DatabaseName = StringFix("test")
@@ -611,7 +668,7 @@ func NewComTableDump() *ComTableDump{
 	ret.TableLen = Uint1(len(ret.TableName))
 	return ret
 }
-func(this *ComTableDump)Decode() []byte{
+func (this *ComTableDump) Decode() []byte {
 	ret := this.Com.Decode()
 	ret = append(ret, this.DatabaseLen.Decode()...)
 	ret = append(ret, this.DatabaseName.Decode()...)
@@ -620,7 +677,7 @@ func(this *ComTableDump)Decode() []byte{
 	return ret
 }
 
-type ComRegisterSlave struct{
+type ComRegisterSlave struct {
 	Comv                 Uint1 // 0x15
 	ServerId             Uint4
 	SlavesHostnameLength Uint1
@@ -633,7 +690,8 @@ type ComRegisterSlave struct{
 	ReplicationRank      Uint4
 	MasterId             Uint4
 }
-func NewComRegisterSlave() *ComRegisterSlave{
+
+func NewComRegisterSlave() *ComRegisterSlave {
 	ret := &ComRegisterSlave{}
 	ret.Comv = 0x15
 	ret.ServerId = 2
@@ -648,7 +706,7 @@ func NewComRegisterSlave() *ComRegisterSlave{
 	ret.MasterId = 0
 	return ret
 }
-func(this *ComRegisterSlave)Decode() []byte{
+func (this *ComRegisterSlave) Decode() []byte {
 	ret := this.Comv.Decode()
 	ret = append(ret, this.ServerId.Decode()...)
 	ret = append(ret, this.SlavesHostnameLength.Decode()...)
@@ -662,12 +720,13 @@ func(this *ComRegisterSlave)Decode() []byte{
 	ret = append(ret, this.MasterId.Decode()...)
 	return ret
 }
-func (this ComRegisterSlave) String() string{
+func (this ComRegisterSlave) String() string {
 	return fmt.Sprintf("{Type:ComRegisterSlave, Comv:%v, ServerId:%v, SlavesHostnameLength:%v, SlavesHostname:%v, SlavesUserLen:%v, SlaveUser:%v, SlavesPasswordLen:%v, SlavesPassword:%v, SlavesMysqlPort:%v, ReplicationRank:%v, MasterId:%v}", this.Comv, this.ServerId, this.SlavesHostnameLength, this.SlavesHostname, this.SlavesUserLen, this.SlaveUser, this.SlavesPasswordLen, this.SlavesPassword, this.SlavesMysqlPort, this.ReplicationRank, this.MasterId)
 }
 
 type ColumnType Uint1
-const(
+
+const (
 	ColumnTypeDecimal    ColumnType = 0x00
 	ColumnTypeTiny       ColumnType = 0x01
 	ColumnTypeShort      ColumnType = 0x02
@@ -692,19 +751,60 @@ const(
 	ColumnTypeEnum       ColumnType = 0xf7
 	ColumnTypeSet        ColumnType = 0xf8
 	ColumnTypeTinyBlob   ColumnType = 0xf9
-	ColumnTypeMediumBlod ColumnType = 0xfa
+	ColumnTypeMediumBlob ColumnType = 0xfa
 	ColumnTypeLongBlob   ColumnType = 0xfb
 	ColumnTypeBlob       ColumnType = 0xfc
 	ColumnTypeVarString  ColumnType = 0xfd
 	ColumnTypeString     ColumnType = 0xfe
-	ColumnTypeGeometry   ColumnType = 0xff	 
+	ColumnTypeGeometry   ColumnType = 0xff
 )
+
+var columnTypeName map[ColumnType]string
+
+func init() {
+	columnTypeName = make(map[ColumnType]string)
+	columnTypeName[ColumnTypeDecimal] = "Decimal"
+	columnTypeName[ColumnTypeTiny] = "Tiny"
+	columnTypeName[ColumnTypeShort] = "Short"
+	columnTypeName[ColumnTypeLong] = "Long"
+	columnTypeName[ColumnTypeFloat] = "Float"
+	columnTypeName[ColumnTypeDouble] = "Double"
+	columnTypeName[ColumnTypeNull] = "Null"
+	columnTypeName[ColumnTypeTimestamp] = "Timestamp"
+	columnTypeName[ColumnTypeLonglong] = "Longlong"
+	columnTypeName[ColumnTypeInt24] = "Int24"
+	columnTypeName[ColumnTypeDate] = "Date"
+	columnTypeName[ColumnTypeTime] = "Time"
+	columnTypeName[ColumnTypeDatetime] = "Datetime"
+	columnTypeName[ColumnTypeYear] = "Year"
+	columnTypeName[ColumnTypeNewDate] = "Date"
+	columnTypeName[ColumnTypeVarchar] = "Varchar"
+	columnTypeName[ColumnTypeBit] = "Bit"
+	columnTypeName[ColumnTypeTimestamp2] = "Timestamp"
+	columnTypeName[ColumnTypeDatetime2] = "Datetime"
+	columnTypeName[ColumnTypeTime2] = "Time"
+	columnTypeName[ColumnTypeNewDecimal] = "Decimal"
+	columnTypeName[ColumnTypeEnum] = "Enum"
+	columnTypeName[ColumnTypeSet] = "Set"
+	columnTypeName[ColumnTypeTinyBlob] = "TinyBlob"
+	columnTypeName[ColumnTypeMediumBlob] = "MediumBlob"
+	columnTypeName[ColumnTypeLongBlob] = "LongBlob"
+	columnTypeName[ColumnTypeBlob] = "Blob"
+	columnTypeName[ColumnTypeVarString] = "VarString"
+	columnTypeName[ColumnTypeString] = "String"
+	columnTypeName[ColumnTypeGeometry] = "Geometry"
+}
+func GetColumnTypeName(columnType ColumnType) string {
+	return columnTypeName[columnType]
+}
+
 // 关于meta def，可以参考
 // https://dev.mysql.com/doc/dev/mysql-server/latest/classbinary__log_1_1Table__map__event.html
 // 在 https://dev.mysql.com/doc/internals/en/table-map-event.html 中Decimal的长度为2，但在上面的链接里长度为0
-var columnMetaDefLength map[ColumnType] int
-func init(){
-	columnMetaDefLength = make(map[ColumnType] int)
+var columnMetaDefLength map[ColumnType]int
+
+func init() {
+	columnMetaDefLength = make(map[ColumnType]int)
 	columnMetaDefLength[ColumnTypeString] = 2
 	columnMetaDefLength[ColumnTypeVarString] = 2
 	columnMetaDefLength[ColumnTypeVarchar] = 2
@@ -715,7 +815,7 @@ func init(){
 	columnMetaDefLength[ColumnTypeFloat] = 1
 	columnMetaDefLength[ColumnTypeEnum] = 2
 	columnMetaDefLength[ColumnTypeSet] = 2
-	columnMetaDefLength[ColumnTypeBit] = 2 // 在文档上写的是0，但实际看起来是2（5.5.62）
+	columnMetaDefLength[ColumnTypeBit] = 2        // 在文档上写的是0，但实际看起来是2（5.5.62）
 	columnMetaDefLength[ColumnTypeTimestamp2] = 0 // 在5.6.46中发现这个
 	columnMetaDefLength[ColumnTypeDate] = 0
 	columnMetaDefLength[ColumnTypeDatetime] = 0
@@ -731,7 +831,8 @@ func init(){
 	columnMetaDefLength[ColumnTypeYear] = 0
 	columnMetaDefLength[ColumnTypeGeometry] = 1
 }
-type TableMapEventType struct{
+
+type TableMapEventType struct {
 	TableId          Uint6
 	Flags            Uint2
 	SchemaNameLength Uint1
@@ -745,62 +846,142 @@ type TableMapEventType struct{
 	ColumnMetaDef    []byte
 	NullBitmask      []byte
 }
-func(this TableMapEventType)String() string{
+
+func (this TableMapEventType) String() string {
 	return fmt.Sprintf("{Type:TableMapEventType, TableId:%v, Flags:%v, SchemaNameLength:%v, SchemaName:%v, TableNameLength:%v, TableName:%v, ColumnCount:%v, ColumnDef:%v, ColumnMetaDef:%v, NullBitmask:%v}", this.TableId, this.Flags, this.SchemaNameLength, this.SchemaName, this.TableNameLength, this.TableName, this.ColumnCount, this.ColumnDef, this.ColumnMetaDef, this.NullBitmask)
 }
-func NewTableMapEvent() TableMapEventType{
+func NewTableMapEvent() TableMapEventType {
 	return TableMapEventType{}
 }
-type ColumnValueType struct{
-	columnType ColumnType
-	isNul      bool
+
+type ColumnValueType struct {
+	ColumnType ColumnType
+	IsNul      bool
 	value      interface{}
 }
-func NewColumnValue(t ColumnType, isNul bool) ColumnValueType{
+
+func NewColumnValue(t ColumnType, isNul bool) ColumnValueType {
 	ret := ColumnValueType{}
-	ret.columnType = t
-	ret.isNul = isNul
+	ret.ColumnType = t
+	ret.IsNul = isNul
 	return ret
 }
-func (this ColumnValueType)String() string{
-	return fmt.Sprintf("{Type:ColumnValueType, columnType:%v, isNul:%v, value:%v}", this.columnType, this.isNul, this.value)
+func (this ColumnValueType) String() string {
+	return fmt.Sprintf("{Type:ColumnValueType, columnType:%v, isNul:%v, value:%v}", this.ColumnType, this.IsNul, this.value)
 }
-type RowsEventRowType struct{
+func (this ColumnValueType) GetInt8() (ret int8, ok bool) {
+	if this.ColumnType == ColumnTypeTiny {
+		ret, ok = this.value.(int8)
+	}
+	return
+}
+func (this ColumnValueType) GetInt16() (ret int16, ok bool) {
+	if this.ColumnType == ColumnTypeShort {
+		ret, ok = this.value.(int16)
+	}
+	return
+}
+func (this ColumnValueType) GetInt32() (ret int32, ok bool) {
+	if this.ColumnType == ColumnTypeLong || this.ColumnType == ColumnTypeInt24 {
+		ret, ok = this.value.(int32)
+	}
+	return
+}
+func (this ColumnValueType) GetInt64(ret int64, ok bool) {
+	if this.ColumnType == ColumnTypeLonglong {
+		ret, ok = this.value.(int64)
+	}
+	return
+}
+func (this ColumnValueType) GetFloat32(ret float32, ok bool) {
+	if this.ColumnType == ColumnTypeFloat {
+		ret, ok = this.value.(float32)
+	}
+	return
+}
+func (this ColumnValueType) GetFloat64(ret float64, ok bool) {
+	if this.ColumnType == ColumnTypeFloat {
+		ret, ok = this.value.(float64)
+	}
+	return
+}
+func (this ColumnValueType) GetTime(ret ColumnValueTimeType, ok bool) {
+	if this.ColumnType == ColumnTypeTimestamp || this.ColumnType == ColumnTypeDate || this.ColumnType == ColumnTypeDatetime || this.ColumnType == ColumnTypeTimestamp2 || this.ColumnType == ColumnTypeDatetime2 {
+		ret, ok = this.value.(ColumnValueTimeType)
+	}
+	return
+}
+func (this ColumnValueType) GetDuration(ret time.Duration, ok bool) {
+	if this.ColumnType == ColumnTypeTime || this.ColumnType == ColumnTypeTime2 {
+		ret, ok = this.value.(time.Duration)
+	}
+	return
+}
+func (this ColumnValueType) GetYear(ret int16, ok bool) {
+	if this.ColumnType == ColumnTypeYear {
+		ret, ok = this.value.(int16)
+	}
+	return
+}
+func (this ColumnValueType) GetString(ret string, ok bool) {
+	if this.ColumnType == ColumnTypeDecimal || this.ColumnType == ColumnTypeVarchar || this.ColumnType == ColumnTypeNewDecimal || this.ColumnType == ColumnTypeString {
+		ret, ok = this.value.(string)
+	}
+	return
+}
+func (this ColumnValueType) GetBytes(ret []byte, ok bool) {
+	if this.ColumnType == ColumnTypeBit || this.ColumnType == ColumnTypeTinyBlob || this.ColumnType == ColumnTypeBlob || this.ColumnType == ColumnTypeMediumBlob || this.ColumnType == ColumnTypeLongBlob || this.ColumnType == ColumnTypeVarString {
+		ret, ok = this.value.([]byte)
+	}
+	return
+}
+func (this ColumnValueType) GetSet(ret []ColumnValueSetType, ok bool) {
+	if this.ColumnType == ColumnTypeEnum || this.ColumnType == ColumnTypeSet {
+		ret, ok = this.value.([]ColumnValueSetType)
+	}
+	return
+}
+
+type RowsEventRowType struct {
 	NulBitmap1 []byte
 	Value1     []ColumnValueType
 	NulBitmap2 []byte
-	Value2     []ColumnValueType	
+	Value2     []ColumnValueType
 }
-func NewRowsEventRow() RowsEventRowType{
+
+func NewRowsEventRow() RowsEventRowType {
 	return RowsEventRowType{}
 }
-func (this RowsEventRowType)String() string{
+func (this RowsEventRowType) String() string {
 	buf := bytes.NewBufferString("{Type:RowsEventRowType, NulBitmap1:[")
-	for i := range this.NulBitmap1{
+	for i := range this.NulBitmap1 {
 		buf.WriteString(fmt.Sprintf("%02x ", this.NulBitmap1[i]))
 	}
 	buf.WriteString("], Value1:[")
-	for i := range this.Value1{
+	for i := range this.Value1 {
 		buf.WriteString(fmt.Sprintf("%v, ", this.Value1[i]))
 	}
 	buf.WriteString("], NulBitmap2:[")
-	for i := range this.NulBitmap2{
+	for i := range this.NulBitmap2 {
 		buf.WriteString(fmt.Sprintf("%02x ", this.NulBitmap2[i]))
 	}
 	buf.WriteString("], Value2:[")
-	for i := range this.Value2{
+	for i := range this.Value2 {
 		buf.WriteString(fmt.Sprintf("%v, ", this.Value2[i]))
 	}
 	buf.WriteString("]}")
 	return buf.String()
 }
+
 type RowsEvenCommand byte
-const(
+
+const (
 	RowsEvenCommandInsert RowsEvenCommand = 1
 	RowsEvenCommandDelete RowsEvenCommand = 2
 	RowsEvenCommandUpdate RowsEvenCommand = 3
 )
-type RowsEventType struct{
+
+type RowsEventType struct {
 	Version               Uint1
 	TableId               Uint6
 	Flags                 Uint2
@@ -811,9 +992,9 @@ type RowsEventType struct{
 	ColumnsPresentBitmap2 []byte
 	Rows                  []RowsEventRowType
 	Command               RowsEvenCommand
-	
 }
-func NewRowsEvent(ver Uint1, eventType Uint1) RowsEventType{
+
+func NewRowsEvent(ver Uint1, eventType Uint1) RowsEventType {
 	ret := RowsEventType{}
 	ret.Version = ver
 	if eventType == EventTypeWriteRowsEventv0 || eventType == EventTypeWriteRowsEventv1 || eventType == EventTypeWriteRowsEventv2 {
@@ -825,7 +1006,7 @@ func NewRowsEvent(ver Uint1, eventType Uint1) RowsEventType{
 	}
 	return ret
 }
-func (this RowsEventType)String() string{
+func (this RowsEventType) String() string {
 	buf := bytes.NewBufferString(fmt.Sprintf("{Type:RowsEventType, Version:%v, Command:%v, TableId:%v, Flags:%v, ExtraDataLength:%v, ExtraData:%v, NumberOfColumns:%v, ", this.Version, this.Command, this.TableId, this.Flags, this.ExtraDataLength, this.ExtraData, this.NumberOfColumns))
 	buf.WriteString("ColumnsPresentBitmap1:[")
 	for i := range this.ColumnsPresentBitmap1 {
@@ -842,21 +1023,25 @@ func (this RowsEventType)String() string{
 	buf.WriteString("]}")
 	return buf.String()
 }
-type RowsQueryEventType struct{
+
+type RowsQueryEventType struct {
 	Length    Uint1
 	QueryText StringEof
 }
-func NewRowsQueryEvent() RowsQueryEventType{
+
+func NewRowsQueryEvent() RowsQueryEventType {
 	return RowsQueryEventType{}
 }
 
-const MaxPacketPayloadSize = (1<<24)-1
-type Packet struct{
+const MaxPacketPayloadSize = (1 << 24) - 1
+
+type Packet struct {
 	PayloadLength Uint3
-	SequenceId Uint1
-	Payload []byte
+	SequenceId    Uint1
+	Payload       []byte
 }
-func (this *Packet) Decode() []byte{
+
+func (this *Packet) Decode() []byte {
 	ret := append(this.PayloadLength.Decode(), this.SequenceId.Decode()...)
 	return append(ret, this.Payload...)
 }
@@ -899,7 +1084,8 @@ const (
 	EventTypeAnonymousGtidEvent     Uint1 = 0x22
 	EventTypePreviousGtidsEvent     Uint1 = 0x23
 )
-type EventHeaderType struct{
+
+type EventHeaderType struct {
 	Timestamp Uint4
 	EventType Uint1
 	ServerId  Uint4
@@ -907,40 +1093,43 @@ type EventHeaderType struct{
 	LogPos    Uint4
 	Flags     Uint2
 }
-type UnknownEventTypeError struct{
+type UnknownEventTypeError struct {
 	EventType Uint1
 }
-func NewUnknownEventTypeError(eventType Uint1) UnknownEventTypeError{
+
+func NewUnknownEventTypeError(eventType Uint1) UnknownEventTypeError {
 	ret := UnknownEventTypeError{}
 	ret.EventType = eventType
 	return ret
 }
-func (this UnknownEventTypeError)Error() string{
+func (this UnknownEventTypeError) Error() string {
 	return fmt.Sprintf("Unknown EventType:%v", this.EventType)
 }
 
-type StartEventV3Type struct{
+type StartEventV3Type struct {
 	BinlogVersion      Uint2
 	MysqlServerVersion StringFix
 	CreateTimestamp    Uint4
 }
+
 // 每个binlog的第一个事件。用于描述这个binlog文件
-type FormatDescriptionEventType struct{
+type FormatDescriptionEventType struct {
 	BinlogVersion         Uint2
 	MysqlServerVersion    StringFix
 	CreateTimestamp       Uint4
 	EventHeaderLength     Uint1
 	EventTypeHeaderLength []byte
 }
-func NewFormatDescriptionEventType() FormatDescriptionEventType{
+
+func NewFormatDescriptionEventType() FormatDescriptionEventType {
 	return FormatDescriptionEventType{}
 }
-func (this FormatDescriptionEventType)String() string{
+func (this FormatDescriptionEventType) String() string {
 	buf := bytes.NewBufferString("{Type:FormatDescriptionEventType, BinlogVersion:%v, MysqlServerVersion:%v, CreateTimestamp:%v, EventHeaderLength:%v, EventTypeHeaderLength:[")
 	params := make([]interface{}, 0)
 	params = append(params, this.BinlogVersion, this.MysqlServerVersion, this.CreateTimestamp, this.EventHeaderLength)
-	if this.EventTypeHeaderLength != nil{
-		for _, v := range(this.EventTypeHeaderLength) {
+	if this.EventTypeHeaderLength != nil {
+		for _, v := range this.EventTypeHeaderLength {
 			buf.WriteString("%v ")
 			params = append(params, v)
 		}
@@ -948,22 +1137,27 @@ func (this FormatDescriptionEventType)String() string{
 	buf.WriteString("]}")
 	return fmt.Sprintf(buf.String(), params...)
 }
-type RotateEventType struct{
+
+type RotateEventType struct {
 	Position Uint8
 	Name     StringEof
 }
-func NewRotateEventType() RotateEventType{
+
+func NewRotateEventType() RotateEventType {
 	return RotateEventType{}
 }
-func (this RotateEventType)String() string{
+func (this RotateEventType) String() string {
 	return fmt.Sprintf("{Type:RotateEventType, Position:%v, Name:%v}", this.Position, this.Name)
 }
-type StopEventType struct{
+
+type StopEventType struct {
 }
-func NewStopEventType() StopEventType{
+
+func NewStopEventType() StopEventType {
 	return StopEventType{}
 }
-const(
+
+const (
 	Q_FLAGS2_CODE               Uint1 = 0x00
 	Q_SQL_MODE_CODE             Uint1 = 0x01
 	Q_CATALOG                   Uint1 = 0x02
@@ -980,7 +1174,7 @@ const(
 	Q_MICROSECONDS              Uint1 = 0x0d
 )
 
-type StatusVarType struct{
+type StatusVarType struct {
 	uint4Val       Uint4
 	uint8Val       Uint8
 	bytesVal       []byte
@@ -991,13 +1185,14 @@ type StatusVarType struct{
 	stringFixVal2  StringFix
 	updatedDbNames []StringNul
 	uint3Val       Uint3
-	
 }
-func NewStatusVarType() StatusVarType{
+
+func NewStatusVarType() StatusVarType {
 	return StatusVarType{}
 }
-type StatusVarsType map[Uint1] StatusVarType
-type QueryEventType struct{
+
+type StatusVarsType map[Uint1]StatusVarType
+type QueryEventType struct {
 	SlaveProxyId     Uint4
 	ExecutionTime    Uint4
 	SchemaLength     Uint1
@@ -1008,61 +1203,62 @@ type QueryEventType struct{
 	Reserved         Uint1
 	Query            StringEof
 }
-func(this QueryEventType)String() string{
+
+func (this QueryEventType) String() string {
 	buf := bytes.NewBufferString("{Type:QueryEventType, SlaveProxyId:%v, ExecutionTime:%v, SchemaLength:%v, ErrorCode:%v, StatusVarsLength:%v, StatusVars:{")
 	params := make([]interface{}, 0)
 	params = append(params, this.SlaveProxyId, this.ExecutionTime, this.SchemaLength, this.ErrorCode, this.StatusVarsLength)
 	keys := make([]int, 0)
-	for k := range this.StatusVars{
+	for k := range this.StatusVars {
 		keys = append(keys, int(k))
 	}
 	sort.Ints(keys)
-	for i := range keys{
+	for i := range keys {
 		k := keys[i]
 		buf.WriteString("%x:%v, ")
 		params = append(params, k)
 		v := this.StatusVars[Uint1(k)]
-		switch(Uint1(k)){
-			case Q_FLAGS2_CODE:
+		switch Uint1(k) {
+		case Q_FLAGS2_CODE:
 			params = append(params, v.uint4Val)
 
-			case Q_SQL_MODE_CODE:
+		case Q_SQL_MODE_CODE:
 			params = append(params, v.uint8Val)
 
-			case Q_CATALOG:
+		case Q_CATALOG:
 			params = append(params, v.bytesVal)
 
-			case Q_AUTO_INCREMENT:
+		case Q_AUTO_INCREMENT:
 			params = append(params, [2]Uint2{v.uint2Val1, v.uint2Val2})
 
-			case Q_CHARSET_CODE:
+		case Q_CHARSET_CODE:
 			params = append(params, [3]Uint2{v.uint2Val1, v.uint2Val2, v.uint2Val3})
 
-			case Q_TIME_ZONE_CODE:
+		case Q_TIME_ZONE_CODE:
 			params = append(params, v.stringFixVal1)
 
-			case Q_CATALOG_NZ_CODE:
+		case Q_CATALOG_NZ_CODE:
 			params = append(params, v.stringFixVal1)
 
-			case Q_LC_TIME_NAMES_CODE:
+		case Q_LC_TIME_NAMES_CODE:
 			params = append(params, v.uint2Val1)
 
-			case Q_CHARSET_DATABASE_CODE:
+		case Q_CHARSET_DATABASE_CODE:
 			params = append(params, v.uint2Val1)
 
-			case Q_TABLE_MAP_FOR_UPDATE_CODE:
+		case Q_TABLE_MAP_FOR_UPDATE_CODE:
 			params = append(params, v.uint8Val)
 
-			case Q_MASTER_DATA_WRITTEN_CODE:
+		case Q_MASTER_DATA_WRITTEN_CODE:
 			params = append(params, v.uint4Val)
 
-			case Q_INVOKERS:
+		case Q_INVOKERS:
 			params = append(params, [2]StringFix{v.stringFixVal1, v.stringFixVal2})
 
-			case Q_UPDATED_DB_NAMES:
+		case Q_UPDATED_DB_NAMES:
 			params = append(params, v.updatedDbNames)
 
-			case Q_MICROSECONDS:
+		case Q_MICROSECONDS:
 			params = append(params, v.uint3Val)
 		}
 	}
@@ -1071,18 +1267,20 @@ func(this QueryEventType)String() string{
 	return fmt.Sprintf(buf.String(), params...)
 }
 
-type QueryEventStatusVarError struct{
+type QueryEventStatusVarError struct {
 	msg string
 }
-func NewQueryEventStatusVarError(msg string) QueryEventStatusVarError{
+
+func NewQueryEventStatusVarError(msg string) QueryEventStatusVarError {
 	ret := QueryEventStatusVarError{}
 	ret.msg = msg
 	return ret
 }
-func (this QueryEventStatusVarError)Error() string{
+func (this QueryEventStatusVarError) Error() string {
 	return this.msg
 }
-type LoadEventType struct{
+
+type LoadEventType struct {
 	SlaveProxyId     Uint4
 	ExecTime         Uint4
 	SkipLines        Uint4
@@ -1102,10 +1300,12 @@ type LoadEventType struct{
 	SchemaName       StringNul
 	FileName         StringNul
 }
-func NewLoadEvent() LoadEventType{
+
+func NewLoadEvent() LoadEventType {
 	return LoadEventType{}
 }
-type NewLoadEventType struct{
+
+type NewLoadEventType struct {
 	SlaveProxyId     Uint4
 	ExecutionTime    Uint4
 	SkipLines        Uint4
@@ -1129,37 +1329,47 @@ type NewLoadEventType struct{
 	SchemaName       StringNul
 	FileName         StringNul
 }
-func NewNewLoadEventType() NewLoadEventType{
+
+func NewNewLoadEventType() NewLoadEventType {
 	return NewLoadEventType{}
 }
-type CreateFileEventType struct{
+
+type CreateFileEventType struct {
 	FileId    Uint4
 	BlockData StringEof
 }
-func NewCreateFileEvent() CreateFileEventType{
+
+func NewCreateFileEvent() CreateFileEventType {
 	return CreateFileEventType{}
 }
-type AppendBlockEventType struct{
+
+type AppendBlockEventType struct {
 	FileId    Uint4
 	BlockData StringEof
 }
-func NewAppendBlockEvent() AppendBlockEventType{
+
+func NewAppendBlockEvent() AppendBlockEventType {
 	return AppendBlockEventType{}
 }
-type ExecLoadEventType struct{
+
+type ExecLoadEventType struct {
 	FileId Uint4
 }
-func NewExecLoadEvent() ExecLoadEventType{
+
+func NewExecLoadEvent() ExecLoadEventType {
 	return ExecLoadEventType{}
 }
-type BeginLoadQueryEventType struct{
+
+type BeginLoadQueryEventType struct {
 	FileId    Uint4
 	BlockData StringEof
 }
-func NewBeginLoadQueryEvent() BeginLoadQueryEventType{
+
+func NewBeginLoadQueryEvent() BeginLoadQueryEventType {
 	return BeginLoadQueryEventType{}
 }
-type ExecuteLoadQueryEventType struct{
+
+type ExecuteLoadQueryEventType struct {
 	SlaveProxyId     Uint4
 	ExecutionTime    Uint4
 	SchemaLength     Uint1
@@ -1170,39 +1380,49 @@ type ExecuteLoadQueryEventType struct{
 	EndPos           Uint4
 	DupHandlingFlags Uint1
 }
-func NewExecuteLoadQueryEvent() ExecuteLoadQueryEventType{
+
+func NewExecuteLoadQueryEvent() ExecuteLoadQueryEventType {
 	return ExecuteLoadQueryEventType{}
 }
-type DeleteFileEventType struct{
+
+type DeleteFileEventType struct {
 	FileId Uint4
 }
-func NewDeleteFileEvent() DeleteFileEventType{
+
+func NewDeleteFileEvent() DeleteFileEventType {
 	return DeleteFileEventType{}
 }
-type RandEventType struct{
+
+type RandEventType struct {
 	Seed1 Uint8
 	Seed2 Uint8
 }
-func NewRandEvent() RandEventType{
+
+func NewRandEvent() RandEventType {
 	return RandEventType{}
 }
-type XIDEventType struct{
+
+type XIDEventType struct {
 	Xid Uint8
 }
-func(this XIDEventType)String() string{
+
+func (this XIDEventType) String() string {
 	return fmt.Sprintf("{Type: XIDEventType, Xid:%v}", this.Xid)
 }
-func NewXIDEvent() XIDEventType{
+func NewXIDEvent() XIDEventType {
 	return XIDEventType{}
 }
-type IntvarEventType struct{
+
+type IntvarEventType struct {
 	Type  Uint1
 	Value Uint8
 }
-func NewIntvarEvent() IntvarEventType{
+
+func NewIntvarEvent() IntvarEventType {
 	return IntvarEventType{}
 }
-type UserVarEventType struct{
+
+type UserVarEventType struct {
 	NameLength  Uint4
 	Name        StringFix
 	IsNull      Uint1
@@ -1212,74 +1432,83 @@ type UserVarEventType struct{
 	Value       []byte
 	Flags       Uint1
 }
-func NewUserVarEvent() UserVarEventType{
+
+func NewUserVarEvent() UserVarEventType {
 	return UserVarEventType{}
 }
-type IncidentEventType struct{
+
+type IncidentEventType struct {
 	Type          Uint2
 	MessageLength Uint1
 	Message       StringFix
 }
-func NewIncidentEvent() IncidentEventType{
+
+func NewIncidentEvent() IncidentEventType {
 	return IncidentEventType{}
 }
-type ColumnValueTimeFromatError struct{
+
+type ColumnValueTimeFromatError struct {
 	length int
 }
-func NewColumnValueTimeFromatError(l int) ColumnValueTimeFromatError{
+
+func NewColumnValueTimeFromatError(l int) ColumnValueTimeFromatError {
 	ret := ColumnValueTimeFromatError{}
 	ret.length = l
 	return ret
 }
-func(this ColumnValueTimeFromatError)Error() string{
+func (this ColumnValueTimeFromatError) Error() string {
 	return fmt.Sprintf("ColumnValueTimeFromatError: length(%v) is invalid", this.length)
 }
+
 // 因为Mysql中有些数据是没法转成time.Time的，比如"0000-00-00"这样无效的日期，所以这里新做一个类型。
 const (
-	ZeroDateFormat byte = 0
-	DateOnlyFormat byte = 4
-	DateTimeFormat byte = 7
+	ZeroDateFormat     byte = 0
+	DateOnlyFormat     byte = 4
+	DateTimeFormat     byte = 7
 	DateTimeNanoFormat byte = 11
 )
+
 type ColumnValueTimeType struct {
 	// 格式。参考readColumnValueTypeDatetime
-	format byte
-	year Uint2
+	format                           byte
+	year                             Uint2
 	month, day, hour, minute, second Uint1
-	microSecond Uint4
+	microSecond                      Uint4
 }
-func (this ColumnValueTimeType)String() string{
+
+func (this ColumnValueTimeType) String() string {
 	var ret string
-	switch(this.format){
-		case ZeroDateFormat, DateTimeFormat:
+	switch this.format {
+	case ZeroDateFormat, DateTimeFormat:
 		ret = fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d", this.year, this.month, this.day, this.hour, this.minute, this.second)
-		case DateTimeNanoFormat:
-		ret = fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d.%09d", this.year, this.month, this.day, this.hour, this.minute, this.second, this.microSecond * 1000)
-		case DateOnlyFormat:
+	case DateTimeNanoFormat:
+		ret = fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d.%09d", this.year, this.month, this.day, this.hour, this.minute, this.second, this.microSecond*1000)
+	case DateOnlyFormat:
 		ret = fmt.Sprintf("%04d-%02d-%02d", this.year, this.month, this.day)
 	}
 	return ret
 }
-func (this *ColumnValueTimeType)Time() (time.Time, error){
+func (this *ColumnValueTimeType) Time() (time.Time, error) {
 	return time.Parse("2006-01-02 15:04:05.999999999", this.String())
 }
-func NewColumnValueTime(format byte, year Uint2, month, day, hour, minute, second Uint1, microSecond Uint4) ColumnValueTimeType{
+func NewColumnValueTime(format byte, year Uint2, month, day, hour, minute, second Uint1, microSecond Uint4) ColumnValueTimeType {
 	ret := ColumnValueTimeType{}
 	ret.format = format
-	ret.year   = year
-	ret.month  = month
-	ret.day    = day
-	ret.hour   = hour
+	ret.year = year
+	ret.month = month
+	ret.day = day
+	ret.hour = hour
 	ret.minute = minute
 	ret.second = second
 	ret.microSecond = microSecond
 	return ret
 }
 
-type ColumnValueSetType struct{
-	Index int; // 第几个值
-	Value string;
+type ColumnValueSetType struct {
+	Index int // 第几个值
+	Value string
 }
-func NewColumnValueSet() ColumnValueSetType{
+
+func NewColumnValueSet() ColumnValueSetType {
 	return ColumnValueSetType{}
 }
