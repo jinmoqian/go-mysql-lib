@@ -276,18 +276,18 @@ func (this *MysqlServer) Connect() error {
 }
 
 type RowHistory struct {
-	Before []ColumnValueType
-	After  []ColumnValueType
+	NewValues []ColumnValueType
+	Values    []ColumnValueType
 }
 
 func (this RowHistory) String() string {
-	buf := bytes.NewBufferString("{Type:RowHistory, Before:[")
-	for _, v := range this.Before {
+	buf := bytes.NewBufferString("{Type:RowHistory, NewValues:[")
+	for _, v := range this.NewValues {
 		buf.WriteString(v.String())
 		buf.WriteString(",")
 	}
-	buf.WriteString("], After:[")
-	for _, v := range this.After {
+	buf.WriteString("], Values:[")
+	for _, v := range this.Values {
 		buf.WriteString(v.String())
 		buf.WriteString(",")
 	}
@@ -319,8 +319,8 @@ func NewDataHistory(columnValue RowsEventType, tableMap *TableMapEventType) Data
 	}
 	for _, row := range columnValue.Rows {
 		rowHistory := RowHistory{}
-		rowHistory.Before = row.Value1
-		rowHistory.After = row.Value2
+		rowHistory.NewValues = row.Value2
+		rowHistory.Values = row.Value1
 		ret.Rows = append(ret.Rows, rowHistory)
 	}
 	return ret
@@ -344,7 +344,6 @@ func (this *MysqlServer) Open() error {
 	if this.state != CONNECTED {
 		return MysqlError{NOT_CONNECTED, this, nil}
 	}
-	fmt.Println("user=", this.config.User, " pass=", this.config.Pass)
 	err := this.handshake(this.config.User, this.config.Pass, "")
 	if err != nil {
 		return err
@@ -566,7 +565,6 @@ func (this *MysqlServer) Replicate(callback CallbackInterface) error {
 							}
 
 						}
-						fmt.Println("----- TABLE END -----")
 					}
 				}
 				callback.OnQuery(string(queryEvent.Query))

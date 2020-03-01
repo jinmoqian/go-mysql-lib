@@ -399,7 +399,7 @@ func (this *Stream) readEventHeader() (EventHeaderType, error) {
 	return ret, err
 }
 
-var readColumnValueFunc map[ColumnType]func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error)
+var readColumnValueFunc map[ColumnType]func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error)
 
 func readColumnValueTypeBytesLessOrEqual255Bytes(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
 	// 只用一个字节表示长度
@@ -520,12 +520,24 @@ func readColumnValueTypeDatetime(schema, table, column string, metaDef []byte, s
 	return ret, err
 }
 func init() {
-	readColumnValueFunc = make(map[ColumnType]func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error))
-	readColumnValueFunc[ColumnTypeDecimal] = readColumnValueTypeBytes
-	readColumnValueFunc[ColumnTypeTiny] = readColumnValueTypeInt8
-	readColumnValueFunc[ColumnTypeShort] = readColumnValueTypeInt16
-	readColumnValueFunc[ColumnTypeLong] = readColumnValueTypeInt32
-	readColumnValueFunc[ColumnTypeFloat] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc = make(map[ColumnType]func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error))
+	readColumnValueFunc[ColumnTypeDecimal] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
+		val, err := readColumnValueTypeBytes(schema, table, column, metaDef, stream)
+		return val, GoColumnTypeDecimal, err
+	}
+	readColumnValueFunc[ColumnTypeTiny] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
+		val, err := readColumnValueTypeInt8(schema, table, column, metaDef, stream)
+		return val, GoColumnTypeInt8, err
+	}
+	readColumnValueFunc[ColumnTypeShort] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
+		val, err := readColumnValueTypeInt16(schema, table, column, metaDef, stream)
+		return val, GoColumnTypeInt16, err
+	}
+	readColumnValueFunc[ColumnTypeLong] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
+		val, err := readColumnValueTypeInt32(schema, table, column, metaDef, stream)
+		return val, GoColumnTypeInt32, err
+	}
+	readColumnValueFunc[ColumnTypeFloat] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		var err error
 		var buf []byte
 		var ret float32
@@ -533,9 +545,9 @@ func init() {
 		if buf, _, err = stream.readNBytes(4); err == nil {
 			ret = math.Float32frombits(binary.LittleEndian.Uint32(buf))
 		}
-		return ret, err
+		return ret, GoColumnTypeFloat32, err
 	}
-	readColumnValueFunc[ColumnTypeDouble] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeDouble] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		var err error
 		var buf []byte
 		var ret float64
@@ -543,12 +555,12 @@ func init() {
 		if buf, _, err = stream.readNBytes(8); err == nil {
 			ret = math.Float64frombits(binary.LittleEndian.Uint64(buf))
 		}
-		return ret, err
+		return ret, GoColumnTypeFloat64, err
 	}
-	readColumnValueFunc[ColumnTypeNull] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
-		return nil, nil
+	readColumnValueFunc[ColumnTypeNull] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
+		return nil, GoColumnTypeInt8, nil
 	}
-	readColumnValueFunc[ColumnTypeTimestamp] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeTimestamp] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		//readColumnValueTypeDatetime
 		// 5.5.62下是4个int32，表示0000-00-00 00:00:00、1970-01-01 08:00:01～2038-01-19 11:14:07
 		var ret ColumnValueTimeType
@@ -564,18 +576,18 @@ func init() {
 		} else {
 			err = Error{"ColumnTypeTimestamp not int32", 0}
 		}
-		return ret, err
+		return ret, GoColumnTypeDatetime, err
 	}
-	readColumnValueFunc[ColumnTypeLonglong] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeLonglong] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		var err error
 		var buf []byte
 		var ret int64
 		if buf, _, err = stream.readNBytes(8); err == nil {
 			ret = int64(binary.LittleEndian.Uint64(buf))
 		}
-		return ret, err
+		return ret, GoColumnTypeInt64, err
 	}
-	readColumnValueFunc[ColumnTypeInt24] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeInt24] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		var err error
 		var buf []byte
 		var ret int32
@@ -585,9 +597,9 @@ func init() {
 			binary.Read(nb, binary.LittleEndian, &ret)
 			ret = ret >> 8
 		}
-		return ret, err
+		return ret, GoColumnTypeInt32, err
 	}
-	readCompactDate := func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readCompactDate := func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		// 实际看来这里与网上说的不相符。实际上当只有年-月-日时，是把年月日压缩在3个字节内，格式不明确
 		// 用例
 		// 9999 = 10 0111 0000 1111(2) 12 - 1100(2) 31 - 11111(2)
@@ -707,10 +719,10 @@ func init() {
 			}
 			ret = NewColumnValueTime(format, year, month, day, 0, 0, 0, 0)
 		}
-		return ret, nil
+		return ret, GoColumnTypeDatetime, err
 	}
 	readColumnValueFunc[ColumnTypeDate] = readCompactDate
-	readColumnValueFunc[ColumnTypeTime] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeTime] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		// 实际上看和下面文档中说的不一样，可能是版本差异？在5.5.62上返回的格式是8385959表示838小时59分59秒，或负数
 		var ret time.Duration
 		var err error
@@ -722,7 +734,7 @@ func init() {
 			val = val >> 8
 			ret, err = time.ParseDuration(fmt.Sprintf("%vh%vm%vs", (val / 10000), int32(math.Abs(float64(val/100%100))), int32(math.Abs(float64(val%100)))))
 		}
-		return ret, err
+		return ret, GoColumnTypeDuration, err
 	}
 	func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
 		if metaDef == nil {
@@ -762,7 +774,7 @@ func init() {
 		}
 		return ret, err
 	}("", "", "", nil, nil)
-	readColumnValueFunc[ColumnTypeDatetime] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeDatetime] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		//  0  0 0 0 0 0 0 0 => 000000 =       0 => 0000-00-00 00:00:00
 		// 40 42 f 0 0 0 0 0 => 0F4240 = 1000000 => 0000-00-01 00:00:00
 		// 80 84 1e 0 0 0 0 0 =>1E8480 = 2000000 => 0000-00-01 00:00:00
@@ -775,10 +787,10 @@ func init() {
 		if err == nil {
 			ret = NewColumnValueTime(DateTimeFormat, Uint2(val/Uint8(10000000000)%Uint8(10000)), Uint1(val/Uint8(100000000)%Uint8(100)), Uint1(val/Uint8(1000000)%Uint8(100)), Uint1(val/Uint8(10000)%Uint8(100)), Uint1(val/Uint8(100)%Uint8(100)), Uint1(val%Uint8(100)), 0)
 		}
-		return ret, err
+		return ret, GoColumnTypeDatetime, err
 	}
 
-	readColumnValueFunc[ColumnTypeYear] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeYear] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		// YEAR只允许从0～255 表示0000，1901～2155(5.5.62)
 		var ret int16
 		var err error
@@ -790,10 +802,10 @@ func init() {
 				ret = 1900 + int16(val)
 			}
 		}
-		return ret, err
+		return ret, GoColumnTypeYear, err
 	}
-	readColumnValueFunc[ColumnTypeNewDate] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
-		return nil, nil
+	readColumnValueFunc[ColumnTypeNewDate] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
+		return nil, GoColumnTypeInt8, nil
 	}
 	readBytesInMaxBytes := func(maxBytes uint32, stream *Stream) ([]byte, error) {
 		var len int
@@ -825,15 +837,16 @@ func init() {
 		ret, err := readBytesInMaxBytes(maxBytes, stream)
 		return string(ret), err
 	}
-	readColumnValueFunc[ColumnTypeVarchar] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeVarchar] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		// Varchar的meta表示最大字节数
 		// meta中头2个字节是最大长度，决定用几个字节表示数据长度
 		maxBytes := uint16(metaDef[0]) | (uint16(metaDef[1]) << 8)
 		//fmt.Println("maxBytes in ColumnTypeVarchar=", maxBytes, uint16(metaDef[0]), metaDef[1], uint16(metaDef[1]), (uint16(metaDef[1]) << 8))
-		return readStringInMaxBytes(uint32(maxBytes), stream)
+		val, err := readStringInMaxBytes(uint32(maxBytes), stream)
+		return val, GoColumnTypeString, err
 	}
 	//readColumnValueTypeString
-	readColumnValueFunc[ColumnTypeBit] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeBit] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		// create table tbl_bit(val bit(50));   // ColumnDef:[16], ColumnMetaDef:[2 6], NullBitmask:[1]
 		// create table tbl_bit2(val bit(49));  // ColumnDef:[16], ColumnMetaDef:[1 6], NullBitmask:[1]}
 		// create table tbl_bit3(val bit(48));  // ColumnDef:[16], ColumnMetaDef:[0 6], NullBitmask:[1]}
@@ -841,10 +854,10 @@ func init() {
 		//fmt.Println(metaDef)
 		len := metaDef[1] + (metaDef[0]+7)/8
 		buf, _, err := stream.readNBytes(int64(len))
-		return buf, err
+		return buf, GoColumnTypeBytes, err
 	}
 	//readColumnValueTypeBytes
-	readColumnValueFunc[ColumnTypeTimestamp2] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeTimestamp2] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		// 在5.6.46中确认使用，4个字节。但是高位在前。比如1971-01-01 00:00:00对应的是31507200（0x1E0C300），取得的数据流是1 e0 c3 0
 		var ret ColumnValueTimeType
 		var err error
@@ -857,10 +870,9 @@ func init() {
 				ret = NewColumnValueTime(DateTimeFormat, Uint2(t.Year()), Uint1(t.Month()), Uint1(t.Day()), Uint1(t.Hour()), Uint1(t.Minute()), Uint1(t.Second()), 0)
 			}
 		}
-		return ret, err
-		//return nil, nil
+		return ret, GoColumnTypeDatetime, err
 	}
-	readColumnValueFunc[ColumnTypeDatetime2] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeDatetime2] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		// 年14位；月4位；日5位；时间9位
 		// 80 0 0 0 0 = 0000-00-00 00:00:00
 		// 80 0 2 0 0 = 0000-00-01 00:00:00
@@ -897,11 +909,11 @@ func init() {
 			year := yearAndMonth / 13
 			month := yearAndMonth % 13
 
-			ret = NewColumnValueTime(DateTimeNanoFormat, Uint2(year), Uint1(month), Uint1(day), Uint1(hour), Uint1(minute), Uint1(second), 0)
+			ret = NewColumnValueTime(DateTimeFormat, Uint2(year), Uint1(month), Uint1(day), Uint1(hour), Uint1(minute), Uint1(second), 0)
 		}
-		return ret, err
+		return ret, GoColumnTypeDatetime, err
 	}
-	readColumnValueFunc[ColumnTypeTime2] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeTime2] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		// 80 0 0  = 00:00:00
 		// 80 0 1  = 00:00:01
 		// b4 6e fb = 838:59:59
@@ -929,21 +941,21 @@ func init() {
 				val = int32(val2)
 				val = -val
 			}
-			fmt.Println("step1, val=", val)
+			// fmt.Println("step1, val=", val)
 			hour := val >> 12
 			minute := (val & 0x00000FC0) >> 6
 			second := val & 0x0000003F
-			fmt.Println("hour=", plus*int(hour), " minute=", minute, " second=", second)
+			// fmt.Println("hour=", plus*int(hour), " minute=", minute, " second=", second)
 			ret, err = time.ParseDuration(fmt.Sprintf("%vh%vm%vs", plus*int(hour), minute, second))
 		}
-		return ret, err
+		return ret, GoColumnTypeDuration, err
 
 	}
 	//func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
 	//buf, _, err := stream.readNBytes(int64(3));
 	//return buf, err
 	//}
-	readColumnValueFunc[ColumnTypeNewDecimal] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeNewDecimal] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		// https://www.mysqltutorial.org/mysql-decimal/
 		// 整数和小数部分分开
 		// 整数部分从右向左9个十进制字符打包成4字节，最后剩下的几位打包（0～4字节），最高位符号？
@@ -1046,20 +1058,30 @@ func init() {
 				ret = "-" + ret
 			}
 		}
-		return ret, err
+		return ret, GoColumnTypeDecimal, err
 	}
-	readColumnValueFunc[ColumnTypeEnum] = readColumnValueTypeBytes
-	readColumnValueFunc[ColumnTypeSet] = readColumnValueTypeBytes
-	readColumnValueFunc[ColumnTypeTinyBlob] = readColumnValueTypeBytes
-	readColumnValueFunc[ColumnTypeMediumBlob] = readColumnValueTypeBytes
-	readColumnValueFunc[ColumnTypeLongBlob] = readColumnValueTypeBytes
-	readColumnValueFunc[ColumnTypeBlob] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeEnum] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
+		val, err := readColumnValueTypeBytes(schema, table, column, metaDef, stream)
+		return val, GoColumnTypeSet, err
+	}
+	readColumnValueFunc[ColumnTypeSet] = readColumnValueFunc[ColumnTypeEnum]
+	readColumnValueFunc[ColumnTypeTinyBlob] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
+		val, err := readColumnValueTypeBytes(schema, table, column, metaDef, stream)
+		return val, GoColumnTypeBytes, err
+	}
+	readColumnValueFunc[ColumnTypeMediumBlob] = readColumnValueFunc[ColumnTypeTinyBlob]
+	readColumnValueFunc[ColumnTypeLongBlob] = readColumnValueFunc[ColumnTypeTinyBlob]
+	readColumnValueFunc[ColumnTypeBlob] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		// blob的meta表示几个字节表示长度
 		maxBytes := uint32((uint64(1) << (8 * metaDef[0])) - 1)
-		return readBytesInMaxBytes(maxBytes, stream)
+		val, err := readBytesInMaxBytes(maxBytes, stream)
+		return val, GoColumnTypeBytes, err
 	}
-	readColumnValueFunc[ColumnTypeVarString] = readColumnValueTypeBytes
-	readColumnValueFunc[ColumnTypeString] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, error) {
+	readColumnValueFunc[ColumnTypeVarString] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
+		val, err := readColumnValueTypeBytes(schema, table, column, metaDef, stream)
+		return val, GoColumnTypeString, err
+	}
+	readColumnValueFunc[ColumnTypeString] = func(schema, table, column string, metaDef []byte, stream *Stream) (interface{}, GoColumnType, error) {
 		// 根据meta取得最大长度。如果长度>255，则2位字节表示数据长度；如果<=255，则用一位表示字节
 		// 但char型有个bug
 		// https://bugs.mysql.com/bug.php?id=37426
@@ -1081,12 +1103,13 @@ func init() {
 						if buf[i]&byte(m) != 0 {
 							val := NewColumnValueSet()
 							val.Index = index
+							// fmt.Println("schema= ", schema, " table=", table, " column=", column, " SET=", index)
 							ret = append(ret, val)
 						}
 					}
 				}
 			}
-			return ret, err
+			return ret, GoColumnTypeSet, err
 		} else {
 			// 是个string
 			if stream.serverConfig.compareVersion("5.6.0") >= 0 {
@@ -1118,25 +1141,26 @@ func init() {
 					var str StringFix
 					str, err = stream.ReadStringFix(length)
 					//fmt.Println("Read String From stream>=5.6.46, length=", length, " str=", str)
-					return string(str), err
+					return string(str), GoColumnTypeString, err
 				} else {
-					return nil, err
+					return nil, GoColumnTypeString, err
 				}
 			} else {
 				maxBytes := ((uint16(metaDef[0]&0x30 ^ 0x30)) << 8) | uint16(metaDef[1])
-				return readStringInMaxBytes(uint32(maxBytes), stream)
+				val, err := readStringInMaxBytes(uint32(maxBytes), stream)
+				return val, GoColumnTypeString, err
 			}
 		}
 	}
-	readColumnValueFunc[ColumnTypeGeometry] = readColumnValueTypeBytes
+	//readColumnValueFunc[ColumnTypeGeometry] = readColumnValueTypeBytes
 }
 
 func (this *Stream) readColumnValue(schema, table, column string, columnType ColumnType, metaDef []byte, isNul bool) (ColumnValueType, error) {
-	ret := NewColumnValue(columnType, isNul)
+	ret := NewColumnValue(isNul)
 	var err error
 	if !isNul {
 		if f, ok := readColumnValueFunc[columnType]; ok {
-			ret.value, err = f(schema, table, column, metaDef, this)
+			ret.value, ret.ColumnType, err = f(schema, table, column, metaDef, this)
 		} else {
 			// TODO 没有处理这个类型
 			err = Error{fmt.Sprintf("Cannot process Schema=%v Table=%v Column=%v Type=%v", schema, table, column, columnType), 0}
@@ -1705,8 +1729,8 @@ func init() {
 						var table string
 						if tableMap, ok := stream.serverConfig.TableMaps[Uint8(ret.TableId)]; !ok {
 							// 这个表未定义？
-							dummy, _ := stream.ReadStringEof(payloadLength)
-							fmt.Println("Dummy data=", dummy)
+							stream.ReadStringEof(payloadLength)
+							//fmt.Println("Dummy data=", dummy)
 							return ret, nil
 						} else {
 							schema = string(tableMap.SchemaName)
@@ -1715,8 +1739,8 @@ func init() {
 							for _, columnType := range tableMap.ColumnDef {
 								if columnType == ColumnTypeGeometry {
 									//fmt.Println("Unsupported Column=", columnType, " in table ", tableMap.SchemaName, ".", tableMap.TableName)
-									dummy, _ := stream.ReadStringEof(payloadLength)
-									fmt.Println("Dummy data=", dummy)
+									stream.ReadStringEof(payloadLength)
+									//fmt.Println("Dummy data=", dummy)
 									return ret, nil
 								}
 							}

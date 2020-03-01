@@ -759,44 +759,24 @@ const (
 	ColumnTypeGeometry   ColumnType = 0xff
 )
 
-var columnTypeName map[ColumnType]string
+// MySql可以转成的Go的类型
+type GoColumnType uint8
 
-func init() {
-	columnTypeName = make(map[ColumnType]string)
-	columnTypeName[ColumnTypeDecimal] = "Decimal"
-	columnTypeName[ColumnTypeTiny] = "Tiny"
-	columnTypeName[ColumnTypeShort] = "Short"
-	columnTypeName[ColumnTypeLong] = "Long"
-	columnTypeName[ColumnTypeFloat] = "Float"
-	columnTypeName[ColumnTypeDouble] = "Double"
-	columnTypeName[ColumnTypeNull] = "Null"
-	columnTypeName[ColumnTypeTimestamp] = "Timestamp"
-	columnTypeName[ColumnTypeLonglong] = "Longlong"
-	columnTypeName[ColumnTypeInt24] = "Int24"
-	columnTypeName[ColumnTypeDate] = "Date"
-	columnTypeName[ColumnTypeTime] = "Time"
-	columnTypeName[ColumnTypeDatetime] = "Datetime"
-	columnTypeName[ColumnTypeYear] = "Year"
-	columnTypeName[ColumnTypeNewDate] = "Date"
-	columnTypeName[ColumnTypeVarchar] = "Varchar"
-	columnTypeName[ColumnTypeBit] = "Bit"
-	columnTypeName[ColumnTypeTimestamp2] = "Timestamp"
-	columnTypeName[ColumnTypeDatetime2] = "Datetime"
-	columnTypeName[ColumnTypeTime2] = "Time"
-	columnTypeName[ColumnTypeNewDecimal] = "Decimal"
-	columnTypeName[ColumnTypeEnum] = "Enum"
-	columnTypeName[ColumnTypeSet] = "Set"
-	columnTypeName[ColumnTypeTinyBlob] = "TinyBlob"
-	columnTypeName[ColumnTypeMediumBlob] = "MediumBlob"
-	columnTypeName[ColumnTypeLongBlob] = "LongBlob"
-	columnTypeName[ColumnTypeBlob] = "Blob"
-	columnTypeName[ColumnTypeVarString] = "VarString"
-	columnTypeName[ColumnTypeString] = "String"
-	columnTypeName[ColumnTypeGeometry] = "Geometry"
-}
-func GetColumnTypeName(columnType ColumnType) string {
-	return columnTypeName[columnType]
-}
+const (
+	GoColumnTypeInt8     GoColumnType = 0x01
+	GoColumnTypeInt16                 = 0x02
+	GoColumnTypeInt32                 = 0x03
+	GoColumnTypeInt64                 = 0x04
+	GoColumnTypeFloat32               = 0x05
+	GoColumnTypeFloat64               = 0x06
+	GoColumnTypeDecimal               = 0x07
+	GoColumnTypeDatetime              = 0x08
+	GoColumnTypeDuration              = 0x09
+	GoColumnTypeYear                  = 0x0A
+	GoColumnTypeString                = 0x0B
+	GoColumnTypeSet                   = 0x0C
+	GoColumnTypeBytes                 = 0x0D
+)
 
 // 关于meta def，可以参考
 // https://dev.mysql.com/doc/dev/mysql-server/latest/classbinary__log_1_1Table__map__event.html
@@ -855,14 +835,15 @@ func NewTableMapEvent() TableMapEventType {
 }
 
 type ColumnValueType struct {
-	ColumnType ColumnType
+	// binlog中的ColumnType与实际的可能不同，比如SET、ENUM都有可能对应的是String。而且还有Decimal和Decimal2这2种不同格式的可能
+	// 这里是对Go语言有意义的类型
+	ColumnType GoColumnType
 	IsNul      bool
 	value      interface{}
 }
 
-func NewColumnValue(t ColumnType, isNul bool) ColumnValueType {
+func NewColumnValue(isNul bool) ColumnValueType {
 	ret := ColumnValueType{}
-	ret.ColumnType = t
 	ret.IsNul = isNul
 	return ret
 }
@@ -870,74 +851,82 @@ func (this ColumnValueType) String() string {
 	return fmt.Sprintf("{Type:ColumnValueType, columnType:%v, isNul:%v, value:%v}", this.ColumnType, this.IsNul, this.value)
 }
 func (this ColumnValueType) GetInt8() (ret int8, ok bool) {
-	if this.ColumnType == ColumnTypeTiny {
+	if this.ColumnType == GoColumnTypeInt8 {
 		ret, ok = this.value.(int8)
 	}
 	return
 }
 func (this ColumnValueType) GetInt16() (ret int16, ok bool) {
-	if this.ColumnType == ColumnTypeShort {
+	if this.ColumnType == GoColumnTypeInt16 {
 		ret, ok = this.value.(int16)
 	}
 	return
 }
 func (this ColumnValueType) GetInt32() (ret int32, ok bool) {
-	if this.ColumnType == ColumnTypeLong || this.ColumnType == ColumnTypeInt24 {
+	if this.ColumnType == GoColumnTypeInt32 {
 		ret, ok = this.value.(int32)
 	}
 	return
 }
-func (this ColumnValueType) GetInt64(ret int64, ok bool) {
-	if this.ColumnType == ColumnTypeLonglong {
+func (this ColumnValueType) GetInt64() (ret int64, ok bool) {
+	if this.ColumnType == GoColumnTypeInt64 {
 		ret, ok = this.value.(int64)
 	}
 	return
 }
-func (this ColumnValueType) GetFloat32(ret float32, ok bool) {
-	if this.ColumnType == ColumnTypeFloat {
+func (this ColumnValueType) GetFloat32() (ret float32, ok bool) {
+	if this.ColumnType == GoColumnTypeFloat32 {
 		ret, ok = this.value.(float32)
 	}
 	return
 }
-func (this ColumnValueType) GetFloat64(ret float64, ok bool) {
-	if this.ColumnType == ColumnTypeFloat {
+func (this ColumnValueType) GetFloat64() (ret float64, ok bool) {
+	if this.ColumnType == GoColumnTypeFloat64 {
 		ret, ok = this.value.(float64)
 	}
 	return
 }
-func (this ColumnValueType) GetTime(ret ColumnValueTimeType, ok bool) {
-	if this.ColumnType == ColumnTypeTimestamp || this.ColumnType == ColumnTypeDate || this.ColumnType == ColumnTypeDatetime || this.ColumnType == ColumnTypeTimestamp2 || this.ColumnType == ColumnTypeDatetime2 {
+func (this ColumnValueType) GetTime() (ret ColumnValueTimeType, ok bool) {
+	if this.ColumnType == GoColumnTypeDatetime {
 		ret, ok = this.value.(ColumnValueTimeType)
 	}
 	return
 }
-func (this ColumnValueType) GetDuration(ret time.Duration, ok bool) {
-	if this.ColumnType == ColumnTypeTime || this.ColumnType == ColumnTypeTime2 {
+func (this ColumnValueType) GetDuration() (ret time.Duration, ok bool) {
+	if this.ColumnType == GoColumnTypeDuration {
 		ret, ok = this.value.(time.Duration)
 	}
 	return
 }
-func (this ColumnValueType) GetYear(ret int16, ok bool) {
-	if this.ColumnType == ColumnTypeYear {
+func (this ColumnValueType) GetYear() (ret int16, ok bool) {
+	if this.ColumnType == GoColumnTypeYear {
 		ret, ok = this.value.(int16)
 	}
 	return
 }
-func (this ColumnValueType) GetString(ret string, ok bool) {
-	if this.ColumnType == ColumnTypeDecimal || this.ColumnType == ColumnTypeVarchar || this.ColumnType == ColumnTypeNewDecimal || this.ColumnType == ColumnTypeString {
+func (this ColumnValueType) GetString() (ret string, ok bool) {
+	if this.ColumnType == GoColumnTypeString {
 		ret, ok = this.value.(string)
 	}
 	return
 }
-func (this ColumnValueType) GetBytes(ret []byte, ok bool) {
-	if this.ColumnType == ColumnTypeBit || this.ColumnType == ColumnTypeTinyBlob || this.ColumnType == ColumnTypeBlob || this.ColumnType == ColumnTypeMediumBlob || this.ColumnType == ColumnTypeLongBlob || this.ColumnType == ColumnTypeVarString {
+func (this ColumnValueType) GetDecimal() (ret string, ok bool) {
+	if this.ColumnType == GoColumnTypeDecimal {
+		ret, ok = this.value.(string)
+	}
+	return
+}
+func (this ColumnValueType) GetBytes() (ret []byte, ok bool) {
+	if this.ColumnType == GoColumnTypeBytes {
 		ret, ok = this.value.([]byte)
 	}
 	return
 }
-func (this ColumnValueType) GetSet(ret []ColumnValueSetType, ok bool) {
-	if this.ColumnType == ColumnTypeEnum || this.ColumnType == ColumnTypeSet {
+func (this ColumnValueType) GetSet() (ret []ColumnValueSetType, ok bool) {
+	fmt.Println("GetSet ColumnType=", this.ColumnType)
+	if this.ColumnType == GoColumnTypeSet {
 		ret, ok = this.value.([]ColumnValueSetType)
+		fmt.Println("GetSet ret=", ret)
 	}
 	return
 }
